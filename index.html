@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Yard Grid Planner</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 font-sans">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useEffect } = React;
+
+    const GRID_OPTIONS = [
+      "P11", "P10", "P9", "P8", "P7", "P6", "P5", "P4", "P3", "P2", "P1",
+      "T1", "T2", "T3",
+      "K1", "K2", "K3"
+    ];
+    const DEFAULT_SERVICES = ["120", "192", "194", "CMA", "225"];
+    const SIZES = ["20ft", "40ft", "40ft HC", "45ft"];
+    const INITIAL_ROWS = Array.from({ length: 12 }, (_, index) => ({
+      id: index + 1,
+      grid: "",
+      size: "40ft",
+      service: "120",
+      lastUpdated: ""
+    }));
+
+    function App() {
+      const [activeTab, setActiveTab] = useState("tracker");
+      const [rows, setRows] = useState(() => {
+        const saved = localStorage.getItem("yard_rows");
+        return saved ? JSON.parse(saved) : INITIAL_ROWS;
+      });
+      const [services, setServices] = useState(() => {
+        const saved = localStorage.getItem("yard_services");
+        return saved ? JSON.parse(saved) : DEFAULT_SERVICES;
+      });
+      const [history, setHistory] = useState(() => {
+        const saved = localStorage.getItem("yard_history");
+        return saved ? JSON.parse(saved) : [];
+      });
+      const [newServiceInput, setNewServiceInput] = useState("");
+      const [showAddService, setShowAddService] = useState(false);
+
+      useEffect(() => { localStorage.setItem("yard_rows", JSON.stringify(rows)); }, [rows]);
+      useEffect(() => { localStorage.setItem("yard_services", JSON.stringify(services)); }, [services]);
+      useEffect(() => { localStorage.setItem("yard_history", JSON.stringify(history)); }, [history]);
+
+      const handleRowChange = (id, field, value) => {
+        const now = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        setRows(prevRows =>
+          prevRows.map(row => {
+            if (row.id === id) {
+              const updatedRow = { ...row, [field]: value, lastUpdated: now };
+              if (row.grid !== "" || value !== "") {
+                const logEntry = {
+                  id: Date.now(),
+                  timestamp: now,
+                  grid: field === "grid" ? value : row.grid,
+                  size: field === "size" ? value : row.size,
+                  service: field === "service" ? value : row.service,
+                  action: `Updated ${field.toUpperCase()} to ${value || "Empty"}`
+                };
+                setHistory(prev => [logEntry, ...prev.slice(0, 49)]);
+              }
+              return updatedRow;
+            }
+            return row;
+          })
+        );
+      };
+
+      const clearRow = (id) => {
+        const rowToClear = rows.find(r => r.id === id);
+        if (!rowToClear || !rowToClear.grid) return;
+        const now = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        setRows(prevRows => prevRows.map(row => row.id === id ? { ...row, grid: "", lastUpdated: now } : row));
+        const logEntry = {
+          id: Date.now(),
+          timestamp: now,
+          grid: rowToClear.grid,
+          size: rowToClear.size,
+          service: rowToClear.service,
+          action: "Cleared Slot"
+        };
+        setHistory(prev => [logEntry, ...prev.slice(0, 49)]);
+      };
+
+      const handleAddService = (e) => {
+        e.preventDefault();
+        if (newServiceInput.trim() && !services.includes(newServiceInput.trim())) {
+          setServices([...services, newServiceInput.trim()]);
+          setNewServiceInput("");
+          setShowAddService(false);
+        }
+      };
+
+      return (
+        <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-6">
+          <header className="max-w-6xl mx-auto mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+            <div>
+              <h1 className="text-2xl font-bold text-white">Yard Grid Planner</h1>
+              <p className="text-sm text-slate-400">12 Descending Active Grid Inputs</p>
+            </div>
+            <div className="flex items-center gap-3">
+              <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
+                <button
+                  onClick={() => setActiveTab("tracker")}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${activeTab === "tracker" ? "bg-blue-600 text-white" : "text-slate-400"}`}
+                >
+                  Active Grid
+                </button>
+                <button
+                  onClick={() => setActiveTab("history")}
+                  className={`px-4 py-2 rounded-md text-sm font-medium ${activeTab === "history" ? "bg-blue-600 text-white" : "text-slate-400"}`}
+                >
+                  Movement Log
+                </button>
+              </div>
+              <button
+                onClick={() => setShowAddService(!showAddService)}
+                className="px-3 py-2 bg-slate-800 border border-slate-700 text-sm font-medium rounded-lg text-blue-400"
+              >
+                + Add Service
+              </button>
+            </div>
+          </header>
+
+          {showAddService && (
+            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-blue-500/30 p-4 rounded-xl">
+              <form onSubmit={handleAddService} className="flex gap-3">
+                <input
+                  type="text"
+                  value={newServiceInput}
+                  onChange={(e) => setNewServiceInput(e.target.value)}
+                  placeholder="Enter new service code"
+                  className="bg-slate-900 border border-slate-700 text-white text-sm rounded-lg p-2.5 flex-1"
+                />
+                <button type="submit" className="bg-blue-600 text-white text-sm px-4 py-2.5 rounded-lg">Save</button>
+              </form>
+            </div>
+          )}
+
+          {activeTab === "tracker" && (
+            <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 overflow-hidden">
+              <table className="w-full text-left">
+                <thead>
+                  <tr className="bg-slate-950 text-slate-400 text-xs uppercase border-b border-slate-700">
+                    <th className="py-3 px-4 w-12 text-center">#</th>
+                    <th className="py-3 px-4">Grid Location</th>
+                    <th className="py-3 px-4">Size</th>
+                    <th className="py-3 px-4">Service</th>
+                    <th className="py-3 px-4">Last Updated</th>
+                    <th className="py-3 px-4 text-right">Action</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-700/50">
+                  {rows.map((row) => (
+                    <tr key={row.id}>
+                      <td className="py-3 px-4 text-slate-500 text-center text-xs">{row.id}</td>
+                      <td className="py-3 px-4">
+                        <select
+                          value={row.grid}
+                          onChange={(e) => handleRowChange(row.id, "grid", e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded-lg p-2.5"
+                        >
+                          <option value="">-- Select Grid --</option>
+                          {GRID_OPTIONS.map((g) => <option key={g} value={g}>{g}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-3 px-4">
+                        <select
+                          value={row.size}
+                          onChange={(e) => handleRowChange(row.id, "size", e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5"
+                        >
+                          {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-3 px-4">
+                        <select
+                          value={row.service}
+                          onChange={(e) => handleRowChange(row.id, "service", e.target.value)}
+                          className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5"
+                        >
+                          {services.map((svc) => <option key={svc} value={svc}>{svc}</option>)}
+                        </select>
+                      </td>
+                      <td className="py-3 px-4 text-xs text-slate-400">{row.lastUpdated || "--"}</td>
+                      <td className="py-3 px-4 text-right">
+                        <button onClick={() => clearRow(row.id)} disabled={!row.grid} className="text-red-400 text-xs px-2 py-1 bg-red-500/10 rounded disabled:opacity-30">Clear</button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </main>
+          )}
+
+          {activeTab === "history" && (
+            <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-4 space-y-2">
+              <h2 className="text-lg font-semibold text-white mb-2">Previous Moves & History</h2>
+              {history.length === 0 ? <p className="text-slate-500 text-sm">No recent activity.</p> : history.map((log) => (
+                <div key={log.id} className="bg-slate-900 border border-slate-700 rounded p-3 flex justify-between text-sm">
+                  <div><strong className="text-blue-400">{log.grid || "N/A"}</strong> ({log.size} | Service: {log.service})</div>
+                  <div className="text-slate-400 text-xs">{log.action} - {log.timestamp}</div>
+                </div>
+              ))}
+            </main>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+  </script>
+</body>
+</html>
