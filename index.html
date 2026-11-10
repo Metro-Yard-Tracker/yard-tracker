@@ -61,6 +61,9 @@
       const [editingServiceIndex, setEditingServiceIndex] = useState(null);
       const [editServiceInput, setEditServiceInput] = useState("");
 
+      // Movement Log Search State
+      const [logSearchQuery, setLogSearchQuery] = useState("");
+
       const dropdownRef = useRef(null);
 
       // Close dropdown when clicking outside
@@ -217,6 +220,18 @@
         firebase.database().ref("yard_services").set(updatedServices);
       };
 
+      // Filtered movement log based on service/search input
+      const filteredHistory = history.filter(log => {
+        if (!logSearchQuery.trim()) return true;
+        const q = logSearchQuery.toLowerCase();
+        return (
+          (log.service && log.service.toLowerCase().includes(q)) ||
+          (log.grid && log.grid.toLowerCase().includes(q)) ||
+          (log.pPark && log.pPark.toLowerCase().includes(q)) ||
+          (log.action && log.action.toLowerCase().includes(q))
+        );
+      });
+
       return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-6 font-sans">
           <datalist id="grid-x-list">
@@ -254,7 +269,7 @@
                 </button>
               </div>
 
-              {/* Single Controls Dropdown Menu */}
+              {/* Controls Dropdown Menu */}
               <div className="relative" ref={dropdownRef}>
                 <button
                   onClick={() => setShowControlsMenu(!showControlsMenu)}
@@ -419,19 +434,63 @@
             </main>
           )}
 
+          {/* Movement Log Tab with Search Bar */}
           {activeTab === "history" && (
-            <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-4 space-y-2">
-              <h2 className="text-lg font-semibold text-white mb-2">Previous Moves & History</h2>
-              {history.length === 0 ? <p className="text-slate-500 text-sm">No recent activity.</p> : history.map((log) => (
-                <div key={log.id} className="bg-slate-900 border border-slate-700 rounded p-3 flex justify-between text-sm">
-                  <div>
-                    <span className="text-slate-300 font-medium">Service: <strong className="text-white">{log.service || "--"}</strong> | Size: {log.size || "--"}</span>
-                    <span className="ml-3 text-blue-400 font-bold">Grid: {log.grid || "--"}</span>
-                    <span className="ml-3 text-emerald-400 font-bold">P Park: {log.pPark || "--"}</span>
-                  </div>
-                  <div className="text-slate-400 text-xs">{log.action} - {log.timestamp}</div>
+            <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-5 space-y-4 shadow-2xl">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
+                <div>
+                  <h2 className="text-lg font-semibold text-white">Previous Moves & History</h2>
+                  <p className="text-xs text-slate-400">Search log entries by Service code, Grid, or Action</p>
                 </div>
-              ))}
+                
+                {/* Search Bar */}
+                <div className="relative w-full sm:w-72">
+                  <input
+                    type="text"
+                    value={logSearchQuery}
+                    onChange={(e) => setLogSearchQuery(e.target.value)}
+                    placeholder="Search by Service (e.g. 120, CMA)..."
+                    className="w-full bg-slate-900 border border-slate-700 text-white text-sm rounded-lg pl-9 pr-8 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none placeholder-slate-500"
+                  />
+                  <span className="absolute left-3 top-2.5 text-slate-500 text-sm">🔍</span>
+                  {logSearchQuery && (
+                    <button
+                      onClick={() => setLogSearchQuery("")}
+                      className="absolute right-2.5 top-2 text-slate-400 hover:text-white text-xs bg-slate-800 rounded-full w-5 h-5 flex items-center justify-center"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              {/* Filtered Log Results */}
+              <div className="space-y-2">
+                {filteredHistory.length === 0 ? (
+                  <p className="text-slate-500 text-sm py-4 text-center">
+                    {logSearchQuery ? `No movement entries found matching "${logSearchQuery}".` : "No recent activity."}
+                  </p>
+                ) : (
+                  filteredHistory.map((log) => (
+                    <div key={log.id} className="bg-slate-900 border border-slate-700/80 rounded-lg p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-sm hover:border-slate-600 transition">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <span className="bg-blue-600/20 text-blue-400 border border-blue-500/30 px-2 py-0.5 rounded text-xs font-semibold">
+                          Service: {log.service || "--"}
+                        </span>
+                        <span className="text-slate-300">Size: <strong className="text-slate-100">{log.size || "--"}</strong></span>
+                        <span className="text-slate-400 font-mono text-xs">|</span>
+                        <span className="text-blue-400 font-bold">Grid: {log.grid || "--"}</span>
+                        <span className="text-emerald-400 font-bold">P Park: {log.pPark || "--"}</span>
+                      </div>
+                      <div className="text-slate-400 text-xs flex items-center gap-2">
+                        <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">{log.action}</span>
+                        <span>•</span>
+                        <span>{log.timestamp}</span>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
             </main>
           )}
         </div>
