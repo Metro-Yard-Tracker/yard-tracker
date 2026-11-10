@@ -60,7 +60,6 @@
         return `${month} ${day}, ${hours}${minutes}`;
       }
 
-      // Fallback regex converter if original string is "Nov 10, 1:30 PM"
       const match = timeStr.match(/^([A-Za-z]+\s+\d+),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
       if (match) {
         const [, datePart, rawH, min, ampm] = match;
@@ -149,32 +148,43 @@
         firebase.database().ref("yard_rows").set(newRows);
       };
 
-      const handleRowChange = (id, field, value) => {
+      // Updates the local UI state without adding to history yet
+      const handleRowInputChange = (id, field, value) => {
+        const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
+        const updatedRows = rows.map(row => row.id === id ? { ...row, [field]: formattedValue } : row);
+        setRows(updatedRows);
+      };
+
+      // Triggers logging only when user finishes editing (dropdown change or text input blur)
+      const handleCommitRowChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
         const now = getCurrent24HourTimestamp();
 
+        const currentRow = rows.find(r => r.id === id);
+        
         const updatedRows = rows.map(row => {
           if (row.id === id) {
-            const updatedRow = { ...row, [field]: formattedValue, lastUpdated: now };
-            
-            // Only log if the updated field is relevant to Service, Size, or Grid
-            const logEntry = {
-              id: Date.now(),
-              timestamp: now,
-              service: field === "service" ? formattedValue : row.service,
-              size: field === "size" ? formattedValue : row.size,
-              grid: field === "grid" ? formattedValue : row.grid,
-              action: `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}`
-            };
-
-            firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
-
-            return updatedRow;
+            return { ...row, [field]: formattedValue, lastUpdated: now };
           }
           return row;
         });
 
+        // Save row state to Firebase
         saveRowsToFirebase(updatedRows);
+
+        // Only create a log entry if the field is relevant (Service, Size, Grid)
+        if (field === "service" || field === "size" || field === "grid") {
+          const logEntry = {
+            id: Date.now(),
+            timestamp: now,
+            service: field === "service" ? formattedValue : currentRow.service,
+            size: field === "size" ? formattedValue : currentRow.size,
+            grid: field === "grid" ? formattedValue : currentRow.grid,
+            action: `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}`
+          };
+
+          firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
+        }
       };
 
       const clearRow = (id) => {
@@ -194,7 +204,6 @@
         };
 
         firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
-
         saveRowsToFirebase(updatedRows);
       };
 
@@ -412,7 +421,7 @@
                         <td className="py-3 px-4">
                           <select
                             value={row.service}
-                            onChange={(e) => handleRowChange(row.id, "service", e.target.value)}
+                            onChange={(e) => handleCommitRowChange(row.id, "service", e.target.value)}
                             className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           >
                             <option value="">-- Select --</option>
@@ -422,7 +431,7 @@
                         <td className="py-3 px-4">
                           <select
                             value={row.size}
-                            onChange={(e) => handleRowChange(row.id, "size", e.target.value)}
+                            onChange={(e) => handleCommitRowChange(row.id, "size", e.target.value)}
                             className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           >
                             <option value="">-- Select --</option>
@@ -435,7 +444,8 @@
                             list="grid-x-list"
                             placeholder="Select or Type (X1, TF1, T1)"
                             value={row.grid}
-                            onChange={(e) => handleRowChange(row.id, "grid", e.target.value)}
+                            onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
+                            onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
                             className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           />
                         </td>
@@ -445,7 +455,8 @@
                             list="p-park-list"
                             placeholder="Select or Type (P1-P11)"
                             value={row.pPark}
-                            onChange={(e) => handleRowChange(row.id, "pPark", e.target.value)}
+                            onChange={(e) => handleRowInputChange(row.id, "pPark", e.target.value)}
+                            onBlur={(e) => handleCommitRowChange(row.id, "pPark", e.target.value)}
                             className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           />
                         </td>
@@ -467,7 +478,7 @@
             </main>
           )}
 
-          {/* Movement Log Tab with Search Bar (Service & Grid Focused) */}
+          {/* Movement Log Tab */}
           {activeTab === "history" && (
             <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-5 space-y-4 shadow-2xl">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
