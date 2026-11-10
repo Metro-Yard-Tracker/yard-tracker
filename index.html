@@ -8,12 +8,24 @@
   <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  
+  <!-- Firebase Scripts -->
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
 <body class="bg-slate-900 text-slate-100 font-sans">
   <div id="root"></div>
 
   <script type="text/babel">
     const { useState, useEffect } = React;
+
+    // Your Live Singapore Firebase Database URL
+    const FIREBASE_DB_URL = "https://yard-tracker-2ac18-default-rtdb.asia-southeast1.firebasedatabase.app/";
+
+    // Initialize Firebase
+    if (!firebase.apps.length && FIREBASE_DB_URL !== "YOUR_DATABASE_URL_HERE") {
+      firebase.initializeApp({ databaseURL: FIREBASE_DB_URL });
+    }
 
     // Grid Options: X1-X42, TF1-TF7, T1-T4
     const GRID_X_OPTIONS = [
@@ -24,7 +36,7 @@
 
     const P_PARK_OPTIONS = Array.from({ length: 11 }, (_, i) => `P${i + 1}`);
     const DEFAULT_SERVICES = ["120", "192", "194", "CMA", "225"];
-    const SIZES = ["20ft", "40ft"]; // Restricted to 20ft and 40ft
+    const SIZES = ["20ft", "40ft"];
 
     const INITIAL_ROWS = Array.from({ length: 12 }, (_, index) => ({
       id: index + 1,
@@ -37,53 +49,81 @@
 
     function App() {
       const [activeTab, setActiveTab] = useState("tracker");
-      const [rows, setRows] = useState(() => {
-        const saved = localStorage.getItem("yard_rows_v4");
-        return saved ? JSON.parse(saved) : INITIAL_ROWS;
-      });
-      const [services, setServices] = useState(() => {
-        const saved = localStorage.getItem("yard_services_v4");
-        return saved ? JSON.parse(saved) : DEFAULT_SERVICES;
-      });
-      const [history, setHistory] = useState(() => {
-        const saved = localStorage.getItem("yard_history");
-        return saved ? JSON.parse(saved) : [];
-      });
+      const [rows, setRows] = useState(INITIAL_ROWS);
+      const [services, setServices] = useState(DEFAULT_SERVICES);
+      const [history, setHistory] = useState([]);
+      const [isSynced, setIsSynced] = useState(false);
 
       const [newServiceInput, setNewServiceInput] = useState("");
       const [showManageServices, setShowManageServices] = useState(false);
       const [editingServiceIndex, setEditingServiceIndex] = useState(null);
       const [editServiceInput, setEditServiceInput] = useState("");
 
-      useEffect(() => { localStorage.setItem("yard_rows_v4", JSON.stringify(rows)); }, [rows]);
-      useEffect(() => { localStorage.setItem("yard_services_v4", JSON.stringify(services)); }, [services]);
-      useEffect(() => { localStorage.setItem("yard_history", JSON.stringify(history)); }, [history]);
+      // Live Sync with Firebase
+      useEffect(() => {
+        if (!FIREBASE_DB_URL) return;
+        const db = firebase.database();
+
+        // Listen for live row changes across all computers
+        const rowsRef = db.ref("yard_rows");
+        rowsRef.on("value", (snapshot) => {
+          const data = snapshot.val();
+          if (data) setRows(data);
+          setIsSynced(true);
+        });
+
+        // Listen for live service code updates
+        const servicesRef = db.ref("yard_services");
+        servicesRef.on("value", (snapshot) => {
+          const data = snapshot.val();
+          if (data) setServices(data);
+        });
+
+        // Listen for live movement history logs
+        const historyRef = db.ref("yard_history");
+        historyRef.on("value", (snapshot) => {
+          const data = snapshot.val();
+          if (data) setHistory(Object.values(data).reverse());
+        });
+
+        return () => {
+          rowsRef.off();
+          servicesRef.off();
+          historyRef.off();
+        };
+      }, []);
+
+      const saveRowsToFirebase = (newRows) => {
+        setRows(newRows);
+        firebase.database().ref("yard_rows").set(newRows);
+      };
 
       const handleRowChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
         const now = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 
-        setRows(prevRows =>
-          prevRows.map(row => {
-            if (row.id === id) {
-              const updatedRow = { ...row, [field]: formattedValue, lastUpdated: now };
-              
-              const logEntry = {
-                id: Date.now(),
-                timestamp: now,
-                service: field === "service" ? formattedValue : row.service,
-                size: field === "size" ? formattedValue : row.size,
-                grid: field === "grid" ? formattedValue : row.grid,
-                pPark: field === "pPark" ? formattedValue : row.pPark,
-                action: `Updated ${field.toUpperCase()} to ${formattedValue || "Empty"}`
-              };
-              setHistory(prev => [logEntry, ...prev.slice(0, 49)]);
+        const updatedRows = rows.map(row => {
+          if (row.id === id) {
+            const updatedRow = { ...row, [field]: formattedValue, lastUpdated: now };
+            
+            const logEntry = {
+              id: Date.now(),
+              timestamp: now,
+              service: field === "service" ? formattedValue : row.service,
+              size: field === "size" ? formattedValue : row.size,
+              grid: field === "grid" ? formattedValue : row.grid,
+              pPark: field === "pPark" ? formattedValue : row.pPark,
+              action: `Updated ${field.toUpperCase()} to ${formattedValue || "Empty"}`
+            };
 
-              return updatedRow;
-            }
-            return row;
-          })
-        );
+            firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
+
+            return updatedRow;
+          }
+          return row;
+        });
+
+        saveRowsToFirebase(updatedRows);
       };
 
       const clearRow = (id) => {
@@ -91,7 +131,7 @@
         if (!rowToClear) return;
 
         const now = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
-        setRows(prevRows => prevRows.map(row => row.id === id ? { ...row, service: "", size: "", grid: "", pPark: "", lastUpdated: now } : row));
+        const updatedRows = rows.map(row => row.id === id ? { ...row, service: "", size: "", grid: "", pPark: "", lastUpdated: now } : row);
         
         const logEntry = {
           id: Date.now(),
@@ -102,14 +142,18 @@
           pPark: rowToClear.pPark,
           action: "Cleared Row"
         };
-        setHistory(prev => [logEntry, ...prev.slice(0, 49)]);
+
+        firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
+
+        saveRowsToFirebase(updatedRows);
       };
 
-      // Manage Services logic
       const handleAddService = (e) => {
         e.preventDefault();
         if (newServiceInput.trim() && !services.includes(newServiceInput.trim())) {
-          setServices([...services, newServiceInput.trim()]);
+          const updatedServices = [...services, newServiceInput.trim()];
+          setServices(updatedServices);
+          firebase.database().ref("yard_services").set(updatedServices);
           setNewServiceInput("");
         }
       };
@@ -131,22 +175,18 @@
         updatedServices[index] = newName;
         setServices(updatedServices);
 
-        // Update active rows that used the old service name
-        setRows(prevRows =>
-          prevRows.map(row => row.service === oldName ? { ...row, service: newName } : row)
-        );
-
+        firebase.database().ref("yard_services").set(updatedServices);
         setEditingServiceIndex(null);
       };
 
       const handleDeleteService = (index) => {
-        const serviceToRemove = services[index];
-        setServices(services.filter((_, i) => i !== index));
+        const updatedServices = services.filter((_, i) => i !== index);
+        setServices(updatedServices);
+        firebase.database().ref("yard_services").set(updatedServices);
       };
 
       return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-6 font-sans">
-          {/* Autocomplete Lists */}
           <datalist id="grid-x-list">
             {GRID_X_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
@@ -156,7 +196,12 @@
 
           <header className="max-w-6xl mx-auto mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
             <div>
-              <h1 className="text-2xl font-bold text-white">Yard Grid Planner</h1>
+              <h1 className="text-2xl font-bold text-white flex items-center gap-2">
+                Yard Grid Planner
+                <span className={`text-xs px-2.5 py-0.5 rounded font-medium ${isSynced ? "bg-emerald-500/20 text-emerald-400 border border-emerald-500/30" : "bg-yellow-500/20 text-yellow-400"}`}>
+                  {isSynced ? "Live Multi-User Connected" : "Connecting..."}
+                </span>
+              </h1>
               <p className="text-sm text-slate-400">12 Descending Container Rows</p>
             </div>
             <div className="flex items-center gap-3">
@@ -183,12 +228,10 @@
             </div>
           </header>
 
-          {/* Manage Services Modal / Section */}
           {showManageServices && (
             <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-blue-500/40 p-5 rounded-xl shadow-xl">
               <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-3">Manage Services List</h3>
               
-              {/* Add New Service Form */}
               <form onSubmit={handleAddService} className="flex gap-3 mb-4">
                 <input
                   type="text"
@@ -202,7 +245,6 @@
                 </button>
               </form>
 
-              {/* Service Items List with Edit/Delete */}
               <div className="flex flex-wrap gap-2 pt-2 border-t border-slate-700">
                 {services.map((svc, idx) => (
                   <div key={idx} className="bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm">
@@ -249,8 +291,6 @@
                     {rows.map((row) => (
                       <tr key={row.id} className="hover:bg-slate-700/30 transition-colors">
                         <td className="py-3 px-4 text-slate-500 text-center text-xs font-mono">{row.id}</td>
-                        
-                        {/* 1. SERVICE */}
                         <td className="py-3 px-4">
                           <select
                             value={row.service}
@@ -261,8 +301,6 @@
                             {services.map((svc) => <option key={svc} value={svc}>{svc}</option>)}
                           </select>
                         </td>
-
-                        {/* 2. SIZE (Restricted to 20ft and 40ft) */}
                         <td className="py-3 px-4">
                           <select
                             value={row.size}
@@ -273,8 +311,6 @@
                             {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
                           </select>
                         </td>
-
-                        {/* 3. GRID (Type X1-X42, TF1-TF7, T1-T4) */}
                         <td className="py-3 px-4">
                           <input
                             type="text"
@@ -285,8 +321,6 @@
                             className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           />
                         </td>
-
-                        {/* 4. P PARK (Type P1-P11) */}
                         <td className="py-3 px-4">
                           <input
                             type="text"
@@ -297,11 +331,7 @@
                             className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           />
                         </td>
-
-                        {/* 5. LAST UPDATED */}
                         <td className="py-3 px-4 text-xs text-slate-400 font-mono">{row.lastUpdated || "--"}</td>
-
-                        {/* ACTION */}
                         <td className="py-3 px-4 text-right">
                           <button
                             onClick={() => clearRow(row.id)}
