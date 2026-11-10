@@ -17,7 +17,7 @@
   <div id="root"></div>
 
   <script type="text/babel">
-    const { useState, useEffect } = React;
+    const { useState, useEffect, useRef } = React;
 
     // Your Live Singapore Firebase Database URL
     const FIREBASE_DB_URL = "https://yard-tracker-2ac18-default-rtdb.asia-southeast1.firebasedatabase.app/";
@@ -54,17 +54,31 @@
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
-      const [newServiceInput, setNewServiceInput] = useState("");
+      // Controls Dropdown & Manage Services States
+      const [showControlsMenu, setShowControlsMenu] = useState(false);
       const [showManageServices, setShowManageServices] = useState(false);
+      const [newServiceInput, setNewServiceInput] = useState("");
       const [editingServiceIndex, setEditingServiceIndex] = useState(null);
       const [editServiceInput, setEditServiceInput] = useState("");
+
+      const dropdownRef = useRef(null);
+
+      // Close dropdown when clicking outside
+      useEffect(() => {
+        const handleClickOutside = (event) => {
+          if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
+            setShowControlsMenu(false);
+          }
+        };
+        document.addEventListener("mousedown", handleClickOutside);
+        return () => document.removeEventListener("mousedown", handleClickOutside);
+      }, []);
 
       // Live Sync with Firebase
       useEffect(() => {
         if (!FIREBASE_DB_URL) return;
         const db = firebase.database();
 
-        // Listen for live row changes across all computers
         const rowsRef = db.ref("yard_rows");
         rowsRef.on("value", (snapshot) => {
           const data = snapshot.val();
@@ -72,14 +86,12 @@
           setIsSynced(true);
         });
 
-        // Listen for live service code updates
         const servicesRef = db.ref("yard_services");
         servicesRef.on("value", (snapshot) => {
           const data = snapshot.val();
           if (data) setServices(data);
         });
 
-        // Listen for live movement history logs
         const historyRef = db.ref("yard_history");
         historyRef.on("value", (snapshot) => {
           const data = snapshot.val();
@@ -148,7 +160,6 @@
         saveRowsToFirebase(updatedRows);
       };
 
-      // Add a new line to the bottom
       const addRow = () => {
         const nextId = rows.length + 1;
         const newRow = {
@@ -159,15 +170,14 @@
           pPark: "",
           lastUpdated: ""
         };
-        const updatedRows = [...rows, newRow];
-        saveRowsToFirebase(updatedRows);
+        saveRowsToFirebase([...rows, newRow]);
+        setShowControlsMenu(false);
       };
 
-      // Remove the last line from the bottom
       const removeRow = () => {
-        if (rows.length <= 1) return; // Keep at least 1 row
-        const updatedRows = rows.slice(0, -1);
-        saveRowsToFirebase(updatedRows);
+        if (rows.length <= 1) return;
+        saveRowsToFirebase(rows.slice(0, -1));
+        setShowControlsMenu(false);
       };
 
       const handleAddService = (e) => {
@@ -226,7 +236,9 @@
               </h1>
               <p className="text-sm text-slate-400">{rows.length} Active Container Lines</p>
             </div>
-            <div className="flex flex-wrap items-center gap-3">
+
+            <div className="flex items-center gap-3">
+              {/* Tabs */}
               <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
                 <button
                   onClick={() => setActiveTab("tracker")}
@@ -241,38 +253,54 @@
                   Movement Log
                 </button>
               </div>
-              
-              {/* Row Management Buttons */}
-              <div className="flex gap-1.5">
-                <button
-                  onClick={addRow}
-                  className="px-3 py-2 bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/30 text-sm font-medium rounded-lg transition"
-                  title="Add Line to bottom"
-                >
-                  + Add Line
-                </button>
-                <button
-                  onClick={removeRow}
-                  disabled={rows.length <= 1}
-                  className="px-3 py-2 bg-red-600/20 border border-red-500/40 text-red-400 hover:bg-red-600/30 text-sm font-medium rounded-lg disabled:opacity-30 transition"
-                  title="Remove bottom Line"
-                >
-                  - Remove Line
-                </button>
-              </div>
 
-              <button
-                onClick={() => setShowManageServices(!showManageServices)}
-                className="px-3 py-2 bg-slate-800 border border-slate-700 text-sm font-medium rounded-lg text-blue-400 hover:bg-slate-700"
-              >
-                ⚙️ Manage Services
-              </button>
+              {/* Single Controls Dropdown Menu */}
+              <div className="relative" ref={dropdownRef}>
+                <button
+                  onClick={() => setShowControlsMenu(!showControlsMenu)}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 border border-slate-700 text-sm font-medium rounded-lg text-slate-200 flex items-center gap-2 transition"
+                >
+                  <span>⚙️ Controls</span>
+                  <span className="text-xs text-slate-400">▼</span>
+                </button>
+
+                {showControlsMenu && (
+                  <div className="absolute right-0 mt-2 w-48 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
+                    <button
+                      onClick={addRow}
+                      className="w-full text-left px-4 py-2.5 text-sm text-emerald-400 hover:bg-slate-700/60 flex items-center gap-2"
+                    >
+                      <span>➕</span> Add Line
+                    </button>
+                    <button
+                      onClick={removeRow}
+                      disabled={rows.length <= 1}
+                      className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-slate-700/60 disabled:opacity-40 flex items-center gap-2 border-b border-slate-700/50"
+                    >
+                      <span>➖</span> Remove Line
+                    </button>
+                    <button
+                      onClick={() => {
+                        setShowManageServices(!showManageServices);
+                        setShowControlsMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-blue-400 hover:bg-slate-700/60 flex items-center gap-2"
+                    >
+                      <span>🏷️</span> Manage Services
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </header>
 
+          {/* Manage Services Drawer */}
           {showManageServices && (
             <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-blue-500/40 p-5 rounded-xl shadow-xl">
-              <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider mb-3">Manage Services List</h3>
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">Manage Services List</h3>
+                <button onClick={() => setShowManageServices(false)} className="text-slate-400 hover:text-white text-xs">✕ Close</button>
+              </div>
               
               <form onSubmit={handleAddService} className="flex gap-3 mb-4">
                 <input
