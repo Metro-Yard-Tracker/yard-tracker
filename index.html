@@ -157,13 +157,13 @@
           if (row.id === id) {
             const updatedRow = { ...row, [field]: formattedValue, lastUpdated: now };
             
+            // Only log if the updated field is relevant to Service, Size, or Grid
             const logEntry = {
               id: Date.now(),
               timestamp: now,
               service: field === "service" ? formattedValue : row.service,
               size: field === "size" ? formattedValue : row.size,
               grid: field === "grid" ? formattedValue : row.grid,
-              pPark: field === "pPark" ? formattedValue : row.pPark,
               action: `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}`
             };
 
@@ -190,7 +190,6 @@
           service: rowToClear.service,
           size: rowToClear.size,
           grid: rowToClear.grid,
-          pPark: rowToClear.pPark,
           action: `Cleared Line ${id}`
         };
 
@@ -262,7 +261,6 @@
         return (
           (log.service && log.service.toLowerCase().includes(q)) ||
           (log.grid && log.grid.toLowerCase().includes(q)) ||
-          (log.pPark && log.pPark.toLowerCase().includes(q)) ||
           (log.action && log.action.toLowerCase().includes(q))
         );
       });
@@ -469,7 +467,7 @@
             </main>
           )}
 
-          {/* Movement Log Tab with Search Bar */}
+          {/* Movement Log Tab with Search Bar (Service & Grid Focused) */}
           {activeTab === "history" && (
             <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-5 space-y-4 shadow-2xl">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
@@ -515,7 +513,6 @@
                         <span className="text-slate-300">Size: <strong className="text-slate-100">{log.size || "--"}</strong></span>
                         <span className="text-slate-400 font-mono text-xs">|</span>
                         <span className="text-blue-400 font-bold">Grid: {log.grid || "--"}</span>
-                        <span className="text-emerald-400 font-bold">P Park: {log.pPark || "--"}</span>
                       </div>
                       <div className="text-slate-400 text-xs flex items-center gap-2">
                         <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">{log.action}</span>
