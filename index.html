@@ -113,7 +113,7 @@
               size: field === "size" ? formattedValue : row.size,
               grid: field === "grid" ? formattedValue : row.grid,
               pPark: field === "pPark" ? formattedValue : row.pPark,
-              action: `Updated ${field.toUpperCase()} to ${formattedValue || "Empty"}`
+              action: `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}`
             };
 
             firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
@@ -140,11 +140,33 @@
           size: rowToClear.size,
           grid: rowToClear.grid,
           pPark: rowToClear.pPark,
-          action: "Cleared Row"
+          action: `Cleared Line ${id}`
         };
 
         firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
 
+        saveRowsToFirebase(updatedRows);
+      };
+
+      // Add a new line to the bottom
+      const addRow = () => {
+        const nextId = rows.length + 1;
+        const newRow = {
+          id: nextId,
+          service: "",
+          size: "",
+          grid: "",
+          pPark: "",
+          lastUpdated: ""
+        };
+        const updatedRows = [...rows, newRow];
+        saveRowsToFirebase(updatedRows);
+      };
+
+      // Remove the last line from the bottom
+      const removeRow = () => {
+        if (rows.length <= 1) return; // Keep at least 1 row
+        const updatedRows = rows.slice(0, -1);
         saveRowsToFirebase(updatedRows);
       };
 
@@ -202,9 +224,9 @@
                   {isSynced ? "Live Multi-User Connected" : "Connecting..."}
                 </span>
               </h1>
-              <p className="text-sm text-slate-400">12 Descending Container Rows</p>
+              <p className="text-sm text-slate-400">{rows.length} Active Container Lines</p>
             </div>
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
                 <button
                   onClick={() => setActiveTab("tracker")}
@@ -219,6 +241,26 @@
                   Movement Log
                 </button>
               </div>
+              
+              {/* Row Management Buttons */}
+              <div className="flex gap-1.5">
+                <button
+                  onClick={addRow}
+                  className="px-3 py-2 bg-emerald-600/20 border border-emerald-500/40 text-emerald-400 hover:bg-emerald-600/30 text-sm font-medium rounded-lg transition"
+                  title="Add Line to bottom"
+                >
+                  + Add Line
+                </button>
+                <button
+                  onClick={removeRow}
+                  disabled={rows.length <= 1}
+                  className="px-3 py-2 bg-red-600/20 border border-red-500/40 text-red-400 hover:bg-red-600/30 text-sm font-medium rounded-lg disabled:opacity-30 transition"
+                  title="Remove bottom Line"
+                >
+                  - Remove Line
+                </button>
+              </div>
+
               <button
                 onClick={() => setShowManageServices(!showManageServices)}
                 className="px-3 py-2 bg-slate-800 border border-slate-700 text-sm font-medium rounded-lg text-blue-400 hover:bg-slate-700"
