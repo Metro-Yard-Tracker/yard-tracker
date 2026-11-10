@@ -47,8 +47,34 @@
       lastUpdated: ""
     }));
 
-    // Explicit 4-Digit 24-Hour Time Format (e.g., "Nov 10, 1300")
-    const get24HourTimestamp = () => {
+    // Helper: Convert any date or timestamp string to 4-Digit 24-Hour format (e.g., "Nov 10, 1300")
+    const formatTo24Hour = (timeStr) => {
+      if (!timeStr) return "--";
+      
+      const parsedDate = new Date(timeStr);
+      if (!isNaN(parsedDate.getTime())) {
+        const month = parsedDate.toLocaleString("en-US", { month: "short" });
+        const day = parsedDate.getDate();
+        const hours = String(parsedDate.getHours()).padStart(2, "0");
+        const minutes = String(parsedDate.getMinutes()).padStart(2, "0");
+        return `${month} ${day}, ${hours}${minutes}`;
+      }
+
+      // Fallback regex converter if original string is "Nov 10, 1:30 PM"
+      const match = timeStr.match(/^([A-Za-z]+\s+\d+),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (match) {
+        const [, datePart, rawH, min, ampm] = match;
+        let h = parseInt(rawH, 10);
+        if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
+        if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+        const hh = String(h).padStart(2, "0");
+        return `${datePart}, ${hh}${min}`;
+      }
+
+      return timeStr;
+    };
+
+    const getCurrent24HourTimestamp = () => {
       const now = new Date();
       const month = now.toLocaleString("en-US", { month: "short" });
       const day = now.getDate();
@@ -125,7 +151,7 @@
 
       const handleRowChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
-        const now = get24HourTimestamp();
+        const now = getCurrent24HourTimestamp();
 
         const updatedRows = rows.map(row => {
           if (row.id === id) {
@@ -155,7 +181,7 @@
         const rowToClear = rows.find(r => r.id === id);
         if (!rowToClear) return;
 
-        const now = get24HourTimestamp();
+        const now = getCurrent24HourTimestamp();
         const updatedRows = rows.map(row => row.id === id ? { ...row, service: "", size: "", grid: "", pPark: "", lastUpdated: now } : row);
         
         const logEntry = {
@@ -425,7 +451,7 @@
                             className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
                           />
                         </td>
-                        <td className="py-3 px-4 text-xs text-slate-400 font-mono">{row.lastUpdated || "--"}</td>
+                        <td className="py-3 px-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
                         <td className="py-3 px-4 text-right">
                           <button
                             onClick={() => clearRow(row.id)}
@@ -494,7 +520,7 @@
                       <div className="text-slate-400 text-xs flex items-center gap-2">
                         <span className="bg-slate-800 text-slate-300 px-2 py-0.5 rounded border border-slate-700">{log.action}</span>
                         <span>•</span>
-                        <span>{log.timestamp}</span>
+                        <span>{formatTo24Hour(log.timestamp)}</span>
                       </div>
                     </div>
                   ))
