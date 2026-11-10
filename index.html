@@ -47,6 +47,17 @@
       lastUpdated: ""
     }));
 
+    // Helper function for 24-hour timestamp (e.g., "Nov 10, 14:30")
+    const get24HourTimestamp = () => {
+      return new Date().toLocaleString("en-US", {
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: false
+      });
+    };
+
     function App() {
       const [activeTab, setActiveTab] = useState("tracker");
       const [rows, setRows] = useState(INITIAL_ROWS);
@@ -115,7 +126,7 @@
 
       const handleRowChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
-        const now = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        const now = get24HourTimestamp();
 
         const updatedRows = rows.map(row => {
           if (row.id === id) {
@@ -145,7 +156,7 @@
         const rowToClear = rows.find(r => r.id === id);
         if (!rowToClear) return;
 
-        const now = new Date().toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+        const now = get24HourTimestamp();
         const updatedRows = rows.map(row => row.id === id ? { ...row, service: "", size: "", grid: "", pPark: "", lastUpdated: now } : row);
         
         const logEntry = {
@@ -220,7 +231,6 @@
         firebase.database().ref("yard_services").set(updatedServices);
       };
 
-      // Filtered movement log based on service/search input
       const filteredHistory = history.filter(log => {
         if (!logSearchQuery.trim()) return true;
         const q = logSearchQuery.toLowerCase();
