@@ -47,10 +47,27 @@
       lastUpdated: ""
     }));
 
-    // Helper: Convert any date or timestamp string to 4-Digit 24-Hour format (e.g., "Nov 10, 1300")
+    // Robust 4-digit 24-hour timestamp formatter
     const formatTo24Hour = (timeStr) => {
       if (!timeStr) return "--";
+
+      // If it is already formatted as "MMM D, HHmm" (e.g., "Nov 11, 1420"), keep it intact!
+      if (/^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}$/.test(timeStr)) {
+        return timeStr;
+      }
       
+      // Handle legacy 12-hour strings (e.g., "Nov 11, 2:20 PM")
+      const legacyMatch = timeStr.match(/^([A-Za-z]+\s+\d+),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
+      if (legacyMatch) {
+        const [, datePart, rawH, min, ampm] = legacyMatch;
+        let h = parseInt(rawH, 10);
+        if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
+        if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
+        const hh = String(h).padStart(2, "0");
+        return `${datePart}, ${hh}${min}`;
+      }
+
+      // Try standard Date parsing
       const parsedDate = new Date(timeStr);
       if (!isNaN(parsedDate.getTime())) {
         const month = parsedDate.toLocaleString("en-US", { month: "short" });
@@ -58,16 +75,6 @@
         const hours = String(parsedDate.getHours()).padStart(2, "0");
         const minutes = String(parsedDate.getMinutes()).padStart(2, "0");
         return `${month} ${day}, ${hours}${minutes}`;
-      }
-
-      const match = timeStr.match(/^([A-Za-z]+\s+\d+),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
-      if (match) {
-        const [, datePart, rawH, min, ampm] = match;
-        let h = parseInt(rawH, 10);
-        if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
-        if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
-        const hh = String(h).padStart(2, "0");
-        return `${datePart}, ${hh}${min}`;
       }
 
       return timeStr;
@@ -148,14 +155,14 @@
         firebase.database().ref("yard_rows").set(newRows);
       };
 
-      // Updates the local UI state without adding to history yet
+      // Updates local state while typing
       const handleRowInputChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
         const updatedRows = rows.map(row => row.id === id ? { ...row, [field]: formattedValue } : row);
         setRows(updatedRows);
       };
 
-      // Triggers logging only when user finishes editing (dropdown change or text input blur)
+      // Commits change to Firebase & History on blur/selection
       const handleCommitRowChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
         const now = getCurrent24HourTimestamp();
@@ -169,10 +176,8 @@
           return row;
         });
 
-        // Save row state to Firebase
         saveRowsToFirebase(updatedRows);
 
-        // Only create a log entry if the field is relevant (Service, Size, Grid)
         if (field === "service" || field === "size" || field === "grid") {
           const logEntry = {
             id: Date.now(),
@@ -295,7 +300,6 @@
             </div>
 
             <div className="flex items-center gap-3">
-              {/* Tabs */}
               <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
                 <button
                   onClick={() => setActiveTab("tracker")}
@@ -311,7 +315,6 @@
                 </button>
               </div>
 
-              {/* Controls Dropdown Menu */}
               <div className="relative" ref={dropdownRef}>
                 <button
                   onClick={() => setShowControlsMenu(!showControlsMenu)}
@@ -351,7 +354,6 @@
             </div>
           </header>
 
-          {/* Manage Services Drawer */}
           {showManageServices && (
             <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-blue-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
@@ -478,7 +480,6 @@
             </main>
           )}
 
-          {/* Movement Log Tab */}
           {activeTab === "history" && (
             <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-5 space-y-4 shadow-2xl">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
@@ -487,7 +488,6 @@
                   <p className="text-xs text-slate-400">Search log entries by Service code, Grid, or Action</p>
                 </div>
                 
-                {/* Search Bar */}
                 <div className="relative w-full sm:w-72">
                   <input
                     type="text"
@@ -508,7 +508,6 @@
                 </div>
               </div>
 
-              {/* Filtered Log Results */}
               <div className="space-y-2">
                 {filteredHistory.length === 0 ? (
                   <p className="text-slate-500 text-sm py-4 text-center">
