@@ -13,7 +13,7 @@
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
 </head>
-<body class="bg-slate-900 text-slate-100 font-sans">
+<body class="bg-slate-900 text-slate-100 font-sans select-none">
   <div id="root"></div>
 
   <script type="text/babel">
@@ -47,16 +47,14 @@
       lastUpdated: ""
     }));
 
-    // Robust 4-digit 24-hour timestamp formatter
+    // Helper: Convert any date or timestamp string to 4-Digit 24-Hour format (e.g., "Nov 11, 1300")
     const formatTo24Hour = (timeStr) => {
       if (!timeStr) return "--";
 
-      // If it is already formatted as "MMM D, HHmm" (e.g., "Nov 11, 1420"), keep it intact!
       if (/^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}$/.test(timeStr)) {
         return timeStr;
       }
       
-      // Handle legacy 12-hour strings (e.g., "Nov 11, 2:20 PM")
       const legacyMatch = timeStr.match(/^([A-Za-z]+\s+\d+),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
       if (legacyMatch) {
         const [, datePart, rawH, min, ampm] = legacyMatch;
@@ -67,7 +65,6 @@
         return `${datePart}, ${hh}${min}`;
       }
 
-      // Try standard Date parsing
       const parsedDate = new Date(timeStr);
       if (!isNaN(parsedDate.getTime())) {
         const month = parsedDate.toLocaleString("en-US", { month: "short" });
@@ -96,6 +93,10 @@
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
+      // Drag and drop state
+      const [draggedIndex, setDraggedIndex] = useState(null);
+      const [dragOverIndex, setDragOverIndex] = useState(null);
+
       // Controls Dropdown & Manage Services States
       const [showControlsMenu, setShowControlsMenu] = useState(false);
       const [showManageServices, setShowManageServices] = useState(false);
@@ -108,7 +109,6 @@
 
       const dropdownRef = useRef(null);
 
-      // Close dropdown when clicking outside
       useEffect(() => {
         const handleClickOutside = (event) => {
           if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
@@ -151,8 +151,10 @@
       }, []);
 
       const saveRowsToFirebase = (newRows) => {
-        setRows(newRows);
-        firebase.database().ref("yard_rows").set(newRows);
+        // Re-assign 1-based sequential IDs so position numbers stay ordered 1..N
+        const reindexedRows = newRows.map((r, i) => ({ ...r, id: i + 1 }));
+        setRows(reindexedRows);
+        firebase.database().ref("yard_rows").set(reindexedRows);
       };
 
       // Updates local state while typing
@@ -211,6 +213,60 @@
         firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
         saveRowsToFirebase(updatedRows);
       };
+
+      // Drag and Drop Logic
+      const handleDragStart = (index) => {
+        setDraggedIndex(index);
+      };
+
+      const handleDragOver = (e, index) => {
+        e.preventDefault();
+        if (dragOverIndex !== index) {
+          setDragOverIndex(index);
+        }
+      };
+
+      const handleDrop = (dropIndex) => {
+        if (draggedIndex === null || draggedIndex === dropIndex) {
+          setDraggedIndex(null);
+          setDragOverIndex(null);
+          return;
+        }
+
+        const updatedRows = [...rows];
+        const [movedRow] = updatedRows.splice(draggedIndex, 1);
+        updatedRows.splice(dropIndex, 0, movedRow);
+
+        saveRowsToFirebase(updatedRows);
+
+        // Record reorder action to history
+        const now = getCurrent24HourTimestamp();
+        const logEntry = {
+          id: Date.now(),
+          timestamp: now,
+          service: movedRow.service,
+          size: movedRow.size,
+          grid: movedRow.grid,
+          action: `Reordered Line to position ${dropIndex + 1}`
+        };
+        firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
+
+        setDraggedIndex(null);
+        setDragOverIndex(null);
+      };
+
+      // Compute display preview order during drag
+      const getPreviewRows = () => {
+        if (draggedIndex === null || dragOverIndex === null || draggedIndex === dragOverIndex) {
+          return rows;
+        }
+        const tempRows = [...rows];
+        const [draggedRow] = tempRows.splice(draggedIndex, 1);
+        tempRows.splice(dragOverIndex, 0, draggedRow);
+        return tempRows;
+      };
+
+      const displayRows = getPreviewRows();
 
       const addRow = () => {
         const nextId = rows.length + 1;
@@ -296,7 +352,7 @@
                   {isSynced ? "Live Multi-User Connected" : "Connecting..."}
                 </span>
               </h1>
-              <p className="text-sm text-slate-400">{rows.length} Active Container Lines</p>
+              <p className="text-sm text-slate-400">{rows.length} Active Container Lines (Drag handle :: to reorder)</p>
             </div>
 
             <div className="flex items-center gap-3">
@@ -404,10 +460,10 @@
           {activeTab === "tracker" && (
             <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 overflow-hidden shadow-2xl">
               <div className="overflow-x-auto">
-                <table className="w-full text-left">
+                <table className="w-full text-left border-collapse">
                   <thead>
                     <tr className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-700">
-                      <th className="py-3.5 px-4 w-12 text-center">#</th>
+                      <th className="py-3.5 px-4 w-16 text-center">#</th>
                       <th className="py-3.5 px-4">Service</th>
                       <th className="py-3.5 px-4">Size</th>
                       <th className="py-3.5 px-4">Grid</th>
@@ -417,63 +473,84 @@
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-700/50">
-                    {rows.map((row) => (
-                      <tr key={row.id} className="hover:bg-slate-700/30 transition-colors">
-                        <td className="py-3 px-4 text-slate-500 text-center text-xs font-mono">{row.id}</td>
-                        <td className="py-3 px-4">
-                          <select
-                            value={row.service}
-                            onChange={(e) => handleCommitRowChange(row.id, "service", e.target.value)}
-                            className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          >
-                            <option value="">-- Select --</option>
-                            {services.map((svc) => <option key={svc} value={svc}>{svc}</option>)}
-                          </select>
-                        </td>
-                        <td className="py-3 px-4">
-                          <select
-                            value={row.size}
-                            onChange={(e) => handleCommitRowChange(row.id, "size", e.target.value)}
-                            className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          >
-                            <option value="">-- Select --</option>
-                            {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-                          </select>
-                        </td>
-                        <td className="py-3 px-4">
-                          <input
-                            type="text"
-                            list="grid-x-list"
-                            placeholder="Select or Type (X1, TF1, T1)"
-                            value={row.grid}
-                            onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
-                            onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
-                            className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          />
-                        </td>
-                        <td className="py-3 px-4">
-                          <input
-                            type="text"
-                            list="p-park-list"
-                            placeholder="Select or Type (P1-P11)"
-                            value={row.pPark}
-                            onChange={(e) => handleRowInputChange(row.id, "pPark", e.target.value)}
-                            onBlur={(e) => handleCommitRowChange(row.id, "pPark", e.target.value)}
-                            className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
-                          />
-                        </td>
-                        <td className="py-3 px-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
-                        <td className="py-3 px-4 text-right">
-                          <button
-                            onClick={() => clearRow(row.id)}
-                            disabled={!row.service && !row.size && !row.grid && !row.pPark}
-                            className="text-red-400 text-xs px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 rounded-md disabled:opacity-30 transition"
-                          >
-                            Clear
-                          </button>
-                        </td>
-                      </tr>
-                    ))}
+                    {displayRows.map((row, index) => {
+                      const isOriginalDragged = draggedIndex === rows.findIndex(r => r.id === row.id);
+                      const isHoverTarget = dragOverIndex === index;
+
+                      return (
+                        <tr
+                          key={row.id}
+                          draggable
+                          onDragStart={() => handleDragStart(rows.findIndex(r => r.id === row.id))}
+                          onDragOver={(e) => handleDragOver(e, index)}
+                          onDrop={() => handleDrop(index)}
+                          className={`transition-all duration-150 ${
+                            isOriginalDragged
+                              ? "opacity-40 bg-blue-900/30 border-2 border-dashed border-blue-500"
+                              : isHoverTarget
+                              ? "bg-blue-600/20 border-t-2 border-blue-400"
+                              : "hover:bg-slate-700/30"
+                          }`}
+                        >
+                          <td className="py-3 px-4 text-slate-500 text-center text-xs font-mono flex items-center justify-center gap-1 cursor-grab active:cursor-grabbing">
+                            <span className="text-slate-400 font-bold hover:text-blue-400 text-sm tracking-tighter">⋮⋮</span>
+                            <span>{index + 1}</span>
+                          </td>
+                          <td className="py-3 px-4">
+                            <select
+                              value={row.service}
+                              onChange={(e) => handleCommitRowChange(row.id, "service", e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                              <option value="">-- Select --</option>
+                              {services.map((svc) => <option key={svc} value={svc}>{svc}</option>)}
+                            </select>
+                          </td>
+                          <td className="py-3 px-4">
+                            <select
+                              value={row.size}
+                              onChange={(e) => handleCommitRowChange(row.id, "size", e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            >
+                              <option value="">-- Select --</option>
+                              {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+                            </select>
+                          </td>
+                          <td className="py-3 px-4">
+                            <input
+                              type="text"
+                              list="grid-x-list"
+                              placeholder="Select or Type (X1, TF1, T1)"
+                              value={row.grid}
+                              onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
+                              onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </td>
+                          <td className="py-3 px-4">
+                            <input
+                              type="text"
+                              list="p-park-list"
+                              placeholder="Select or Type (P1-P11)"
+                              value={row.pPark}
+                              onChange={(e) => handleRowInputChange(row.id, "pPark", e.target.value)}
+                              onBlur={(e) => handleCommitRowChange(row.id, "pPark", e.target.value)}
+                              className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                            />
+                          </td>
+                          <td className="py-3 px-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
+                          <td className="py-3 px-4 text-right">
+                            <button
+                              onClick={() => clearRow(row.id)}
+                              disabled={!row.service && !row.size && !row.grid && !row.pPark}
+                              className="text-red-400 text-xs px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 rounded-md disabled:opacity-30 transition"
+                            >
+                              Clear
+                            </button>
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
