@@ -9,6 +9,9 @@
   <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   
+  <!-- SheetJS for Excel Export -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+
   <!-- Firebase Scripts -->
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
@@ -98,6 +101,10 @@
       const [showNotificationEditor, setShowNotificationEditor] = useState(false);
       const [notificationInput, setNotificationInput] = useState("");
 
+      // Export State
+      const [showExportDrawer, setShowExportDrawer] = useState(false);
+      const [selectedServicesForExport, setSelectedServicesForExport] = useState([]);
+
       // Drag and drop state
       const [draggedIndex, setDraggedIndex] = useState(null);
       const [dragOverIndex, setDragOverIndex] = useState(null);
@@ -148,7 +155,6 @@
           if (data) setHistory(Object.values(data).reverse());
         });
 
-        // Listen for live Notification updates
         const notificationRef = db.ref("yard_notification");
         notificationRef.on("value", (snapshot) => {
           const val = snapshot.val();
@@ -169,14 +175,12 @@
         firebase.database().ref("yard_rows").set(reindexedRows);
       };
 
-      // Updates local state while typing
       const handleRowInputChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
         const updatedRows = rows.map(row => row.id === id ? { ...row, [field]: formattedValue } : row);
         setRows(updatedRows);
       };
 
-      // Commits change to Firebase & History on blur/selection
       const handleCommitRowChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
         const now = getCurrent24HourTimestamp();
@@ -231,6 +235,7 @@
         setNotificationInput(notificationText);
         setShowNotificationEditor(true);
         setShowManageServices(false);
+        setShowExportDrawer(false);
       };
 
       const handleSaveNotification = (e) => {
@@ -243,6 +248,70 @@
       const handleClearNotification = () => {
         firebase.database().ref("yard_notification").set("");
         setNotificationInput("");
+      };
+
+      // Export to Excel Logic
+      const openExportDrawer = () => {
+        setSelectedServicesForExport([...services]); // Select all by default
+        setShowExportDrawer(true);
+        setShowNotificationEditor(false);
+        setShowManageServices(false);
+      };
+
+      const toggleExportService = (svc) => {
+        if (selectedServicesForExport.includes(svc)) {
+          setSelectedServicesForExport(selectedServicesForExport.filter(s => s !== svc));
+        } else {
+          setSelectedServicesForExport([...selectedServicesForExport, svc]);
+        }
+      };
+
+      const selectAllExportServices = () => setSelectedServicesForExport([...services]);
+      const deselectAllExportServices = () => setSelectedServicesForExport([]);
+
+      const handleExecuteExport = () => {
+        // Filter active rows by selected services
+        const rowsToExport = rows.filter(r => r.service && selectedServicesForExport.includes(r.service));
+
+        if (rowsToExport.length === 0) {
+          alert("No matching container rows found for the selected service(s).");
+          return;
+        }
+
+        // Format data exactly like the app table layout
+        const exportData = rowsToExport.map((row, index) => ({
+          "#": index + 1,
+          "Service": row.service || "",
+          "Size": row.size || "",
+          "Grid": row.grid || "",
+          "P Park": row.pPark || "",
+          "Last Updated": formatTo24Hour(row.lastUpdated)
+        }));
+
+        // Create Excel Workbook
+        const worksheet = XLSX.utils.json_to_sheet(exportData);
+        
+        // Auto-fit column widths
+        const columnWidths = [
+          { wch: 6 },  // #
+          { wch: 14 }, // Service
+          { wch: 10 }, // Size
+          { wch: 14 }, // Grid
+          { wch: 14 }, // P Park
+          { wch: 20 }  // Last Updated
+        ];
+        worksheet["!cols"] = columnWidths;
+
+        const workbook = XLSX.utils.book_new();
+        XLSX.utils.book_append_sheet(workbook, worksheet, "Yard Grid Export");
+
+        // Generate Filename with Timestamp
+        const dateStr = new Date().toISOString().slice(0,10);
+        const fileName = `Yard_Grid_Export_${dateStr}.xlsx`;
+
+        // Download Excel file
+        XLSX.writeFile(workbook, fileName);
+        setShowExportDrawer(false);
       };
 
       // Drag and Drop Logic
@@ -414,6 +483,15 @@
                   <div className="absolute right-0 mt-2 w-56 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
                     <button
                       onClick={() => {
+                        openExportDrawer();
+                        setShowControlsMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-emerald-400 hover:bg-slate-700/60 flex items-center gap-2 border-b border-slate-700/50 font-medium"
+                    >
+                      <span>📊</span> Export to Excel
+                    </button>
+                    <button
+                      onClick={() => {
                         openNotificationEditor();
                         setShowControlsMenu(false);
                       }}
@@ -438,6 +516,7 @@
                       onClick={() => {
                         setShowManageServices(!showManageServices);
                         setShowNotificationEditor(false);
+                        setShowExportDrawer(false);
                         setShowControlsMenu(false);
                       }}
                       className="w-full text-left px-4 py-2.5 text-sm text-blue-400 hover:bg-slate-700/60 flex items-center gap-2"
@@ -449,6 +528,54 @@
               </div>
             </div>
           </header>
+
+          {/* Export to Excel Drawer */}
+          {showExportDrawer && (
+            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-emerald-500/40 p-5 rounded-xl shadow-xl">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
+                  <span>📊</span> Select Services to Export (.xlsx)
+                </h3>
+                <button onClick={() => setShowExportDrawer(false)} className="text-slate-400 hover:text-white text-xs">✕ Close</button>
+              </div>
+
+              <div className="flex items-center gap-3 mb-4 text-xs">
+                <button onClick={selectAllExportServices} className="text-blue-400 hover:underline">Select All</button>
+                <span className="text-slate-600">|</span>
+                <button onClick={deselectAllExportServices} className="text-slate-400 hover:underline">Deselect All</button>
+              </div>
+
+              <div className="flex flex-wrap gap-3 mb-5">
+                {services.map((svc) => (
+                  <label key={svc} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border text-sm cursor-pointer transition ${selectedServicesForExport.includes(svc) ? "bg-emerald-600/20 border-emerald-500/50 text-emerald-300" : "bg-slate-900 border-slate-700 text-slate-400"}`}>
+                    <input
+                      type="checkbox"
+                      checked={selectedServicesForExport.includes(svc)}
+                      onChange={() => toggleExportService(svc)}
+                      className="rounded accent-emerald-500"
+                    />
+                    <span className="font-semibold">{svc}</span>
+                  </label>
+                ))}
+              </div>
+
+              <div className="flex gap-3">
+                <button
+                  onClick={handleExecuteExport}
+                  disabled={selectedServicesForExport.length === 0}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-40 text-white text-sm font-medium px-5 py-2.5 rounded-lg transition"
+                >
+                  Download Excel File
+                </button>
+                <button
+                  onClick={() => setShowExportDrawer(false)}
+                  className="bg-slate-700 hover:bg-slate-600 text-slate-300 text-sm font-medium px-4 py-2.5 rounded-lg transition"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Add / Edit Notification Drawer */}
           {showNotificationEditor && (
