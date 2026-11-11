@@ -250,9 +250,9 @@
         setNotificationInput("");
       };
 
-      // Export to Excel Logic
+      // Export to Excel Logic (Excludes # and Last Updated)
       const openExportDrawer = () => {
-        setSelectedServicesForExport([...services]); // Select all by default
+        setSelectedServicesForExport([...services]);
         setShowExportDrawer(true);
         setShowNotificationEditor(false);
         setShowManageServices(false);
@@ -270,7 +270,6 @@
       const deselectAllExportServices = () => setSelectedServicesForExport([]);
 
       const handleExecuteExport = () => {
-        // Filter active rows by selected services
         const rowsToExport = rows.filter(r => r.service && selectedServicesForExport.includes(r.service));
 
         if (rowsToExport.length === 0) {
@@ -278,38 +277,30 @@
           return;
         }
 
-        // Format data exactly like the app table layout
-        const exportData = rowsToExport.map((row, index) => ({
-          "#": index + 1,
+        // Clean export layout with only Service, Size, Grid, and P Park
+        const exportData = rowsToExport.map((row) => ({
           "Service": row.service || "",
           "Size": row.size || "",
           "Grid": row.grid || "",
-          "P Park": row.pPark || "",
-          "Last Updated": formatTo24Hour(row.lastUpdated)
+          "P Park": row.pPark || ""
         }));
 
-        // Create Excel Workbook
         const worksheet = XLSX.utils.json_to_sheet(exportData);
         
-        // Auto-fit column widths
-        const columnWidths = [
-          { wch: 6 },  // #
+        // Auto-fit column widths for the remaining 4 columns
+        worksheet["!cols"] = [
           { wch: 14 }, // Service
           { wch: 10 }, // Size
           { wch: 14 }, // Grid
-          { wch: 14 }, // P Park
-          { wch: 20 }  // Last Updated
+          { wch: 14 }  // P Park
         ];
-        worksheet["!cols"] = columnWidths;
 
         const workbook = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(workbook, worksheet, "Yard Grid Export");
 
-        // Generate Filename with Timestamp
         const dateStr = new Date().toISOString().slice(0,10);
         const fileName = `Yard_Grid_Export_${dateStr}.xlsx`;
 
-        // Download Excel file
         XLSX.writeFile(workbook, fileName);
         setShowExportDrawer(false);
       };
