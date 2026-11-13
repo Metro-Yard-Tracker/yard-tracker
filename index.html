@@ -59,7 +59,7 @@
       { id: 4, grid: "X41", service: "120", size: "40ft" }
     ];
 
-    // Bay Size & Slot Definitions matching yard map
+    // Bay Size & Slot Definitions (X37 & X42 = 20ft; X38-X41 = 40ft)
     const GRIDS_20FT = new Set([
       "X1", "X7", "X12", "X13", "X18", "X19", "X24", "X25", "X30",
       "X31", "X36", "X37", "X42"
@@ -165,6 +165,22 @@
       return zone ? zone.pPark : null;
     };
 
+    // Helper: Build dynamic P-Park segments for a vertical block (handles full or split blocks)
+    const getBlockPParkSegments = (grids, zones) => {
+      const segments = [];
+      grids.forEach((gCode) => {
+        const num = parseInt(gCode.replace("X", ""), 10);
+        const pPark = getAssignedPPark(gCode, zones) || "--";
+        const last = segments[segments.length - 1];
+        if (last && last.pPark === pPark && last.endNum === num - 1) {
+          last.endNum = num;
+        } else {
+          segments.push({ pPark, startNum: num, endNum: num });
+        }
+      });
+      return segments;
+    };
+
     // Helper: Evaluate Slot Info, Size Mismatch & Dedicated Grid Conflicts
     const evaluateRowGridStatus = (row, dedicatedGrids) => {
       if (!row.grid) return null;
@@ -243,8 +259,8 @@
       return `${month} ${day}, ${hours}${minutes}`;
     };
 
-    // Reusable Clean Artistic X Grid Map Component (No numbers in cells, no P-Parks)
-    function XGridMapBoard({ selectedGrid, onSelectGrid, onClose, interactive = false }) {
+    // Reusable Clean Artistic X Grid Map Component with Dynamic P-Park Footer Bar
+    function XGridMapBoard({ selectedGrid, onSelectGrid, onClose, gridZones, interactive = false }) {
       const normalizedSelected = (selectedGrid || "").trim().toUpperCase();
 
       return (
@@ -289,118 +305,137 @@
             </div>
           </div>
 
-          {/* 7 Vertical Blocks with Generous Spacing */}
-          <div className="flex items-start justify-between gap-3.5 pb-1 min-w-max">
-            {YARD_MAP_BLOCKS.map((block) => (
-              <div
-                key={block.title}
-                className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 shadow-inner"
-              >
-                {/* Horizontal Slot Letters Row (A B C D ... J) */}
-                <div className="flex items-center mb-1.5">
-                  <div className="w-9 shrink-0"></div>
-                  <div className="flex gap-1">
-                    {block.letters.map((letter) => (
-                      <div
-                        key={letter}
-                        className="w-4 text-center text-[10px] font-bold text-slate-400 tracking-wide"
-                      >
-                        {letter}
+          {/* 7 Vertical Blocks with Generous Spacing & Dynamic P-Park Zone Footer */}
+          <div className="flex items-stretch justify-between gap-3.5 pb-1 min-w-max">
+            {YARD_MAP_BLOCKS.map((block) => {
+              const pParkSegments = getBlockPParkSegments(block.grids, gridZones);
+
+              return (
+                <div
+                  key={block.title}
+                  className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 shadow-inner flex flex-col justify-between"
+                >
+                  <div>
+                    {/* Horizontal Slot Letters Row (A B C D ... J) */}
+                    <div className="flex items-center mb-1.5">
+                      <div className="w-9 shrink-0"></div>
+                      <div className="flex gap-1">
+                        {block.letters.map((letter) => (
+                          <div
+                            key={letter}
+                            className="w-4 text-center text-[10px] font-bold text-slate-400 tracking-wide"
+                          >
+                            {letter}
+                          </div>
+                        ))}
                       </div>
-                    ))}
+                    </div>
+
+                    {/* Vertical X-Grid Rows */}
+                    <div className="space-y-1.5">
+                      {block.grids.map((gCode) => {
+                        const is20 = GRIDS_20FT.has(gCode);
+                        const isInactive = GRIDS_INACTIVE.has(gCode);
+                        const isCurrentSelected = interactive && normalizedSelected === gCode;
+
+                        const RowWrapper = interactive ? "button" : "div";
+
+                        return (
+                          <RowWrapper
+                            key={gCode}
+                            {...(interactive
+                              ? {
+                                  type: "button",
+                                  onClick: () => onSelectGrid(gCode)
+                                }
+                              : {})}
+                            className={`w-full flex items-center rounded-md px-1 py-0.5 transition-all ${
+                              interactive ? "cursor-pointer" : ""
+                            } ${
+                              isCurrentSelected
+                                ? "ring-2 ring-blue-400 bg-blue-500/20 shadow-md"
+                                : interactive
+                                ? "hover:bg-slate-800/90 hover:ring-1 hover:ring-blue-400/50"
+                                : "hover:bg-slate-800/40"
+                            }`}
+                            title={
+                              isInactive
+                                ? `${gCode} — Inactive`
+                                : `${gCode} (${is20 ? "20ft Bay" : "40ft Bay"})`
+                            }
+                          >
+                            {/* X-Grid Label on Left */}
+                            <span
+                              className={`w-8 shrink-0 text-left text-[11px] font-bold font-mono transition-colors ${
+                                isInactive
+                                  ? "text-slate-600"
+                                  : isCurrentSelected
+                                  ? "text-blue-300"
+                                  : "text-slate-300"
+                              }`}
+                            >
+                              {gCode}
+                            </span>
+
+                            {/* Clean Color-Coded Slot Rectangles (No text or numbers inside) */}
+                            {isInactive ? (
+                              <div
+                                style={{ width: `${block.letters.length * 20 - 4}px` }}
+                                className="h-4 bg-slate-950 border border-slate-800/90 rounded-[3px]"
+                              />
+                            ) : (
+                              <div className="flex gap-1">
+                                {block.letters.map((letter) => {
+                                  const isBlockedSlotA = (gCode === "X4" || gCode === "X5") && letter === "A";
+                                  if (isBlockedSlotA) {
+                                    return (
+                                      <div
+                                        key={letter}
+                                        className="w-4 h-4 bg-white/95 border border-slate-400 rounded-[3px] shadow-sm"
+                                      />
+                                    );
+                                  }
+
+                                  return (
+                                    <div
+                                      key={letter}
+                                      className={`w-4 h-4 rounded-[3px] border shadow-sm transition-transform ${
+                                        is20
+                                          ? "bg-gradient-to-b from-amber-300 to-amber-400 border-amber-500/80"
+                                          : "bg-gradient-to-b from-emerald-400 to-emerald-500 border-emerald-300/70"
+                                      }`}
+                                    />
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </RowWrapper>
+                        );
+                      })}
+                    </div>
+                  </div>
+
+                  {/* Dynamic P-Park Footer Bar (Updates automatically from gridZones) */}
+                  <div className="mt-2.5 pt-1.5 border-t border-slate-800/90 flex items-center gap-1">
+                    {pParkSegments.map((seg, idx) => {
+                      const rangeLabel = pParkSegments.length > 1
+                        ? (seg.startNum === seg.endNum ? ` (X${seg.startNum})` : ` (X${seg.startNum}–${seg.endNum})`)
+                        : "";
+                      return (
+                        <div
+                          key={`${seg.pPark}-${idx}`}
+                          style={{ flexGrow: seg.endNum - seg.startNum + 1 }}
+                          className="text-center text-[10px] font-bold tracking-wide px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 truncate"
+                          title={`Assigned Zone: ${seg.pPark}${rangeLabel}`}
+                        >
+                          {seg.pPark}{rangeLabel}
+                        </div>
+                      );
+                    })}
                   </div>
                 </div>
-
-                {/* Vertical X-Grid Rows */}
-                <div className="space-y-1.5">
-                  {block.grids.map((gCode) => {
-                    const is20 = GRIDS_20FT.has(gCode);
-                    const isInactive = GRIDS_INACTIVE.has(gCode);
-                    const isCurrentSelected = interactive && normalizedSelected === gCode;
-                    const isHybridVisual = gCode === "X37" || gCode === "X38" || gCode === "X41" || gCode === "X42";
-
-                    const RowWrapper = interactive ? "button" : "div";
-
-                    return (
-                      <RowWrapper
-                        key={gCode}
-                        {...(interactive
-                          ? {
-                              type: "button",
-                              onClick: () => onSelectGrid(gCode)
-                            }
-                          : {})}
-                        className={`w-full flex items-center rounded-md px-1 py-0.5 transition-all ${
-                          interactive ? "cursor-pointer" : ""
-                        } ${
-                          isCurrentSelected
-                            ? "ring-2 ring-blue-400 bg-blue-500/20 shadow-md"
-                            : interactive
-                            ? "hover:bg-slate-800/90 hover:ring-1 hover:ring-blue-400/50"
-                            : "hover:bg-slate-800/40"
-                        }`}
-                        title={
-                          isInactive
-                            ? `${gCode} — Inactive`
-                            : `${gCode} (${is20 ? "20ft Bay" : "40ft Bay"})`
-                        }
-                      >
-                        {/* X-Grid Label on Left */}
-                        <span
-                          className={`w-8 shrink-0 text-left text-[11px] font-bold font-mono transition-colors ${
-                            isInactive
-                              ? "text-slate-600"
-                              : isCurrentSelected
-                              ? "text-blue-300"
-                              : "text-slate-300"
-                          }`}
-                        >
-                          {gCode}
-                        </span>
-
-                        {/* Clean Color-Coded Slot Rectangles (No text or numbers inside) */}
-                        {isInactive ? (
-                          <div
-                            style={{ width: `${block.letters.length * 20 - 4}px` }}
-                            className="h-4 bg-slate-950 border border-slate-800/90 rounded-[3px]"
-                          />
-                        ) : (
-                          <div className="flex gap-1">
-                            {block.letters.map((letter, idx) => {
-                              const isBlockedSlotA = (gCode === "X4" || gCode === "X5") && letter === "A";
-                              if (isBlockedSlotA) {
-                                return (
-                                  <div
-                                    key={letter}
-                                    className="w-4 h-4 bg-white/95 border border-slate-400 rounded-[3px] shadow-sm"
-                                  />
-                                );
-                              }
-
-                              // Outer slots A-C (idx 0-2) and H-J (idx 7-9) on X37,X38,X41,X42 are yellow 20ft; center D-G are green 40ft
-                              const cellIsYellow = isHybridVisual
-                                ? idx <= 2 || idx >= 7
-                                : is20;
-
-                              return (
-                                <div
-                                  key={letter}
-                                  className={`w-4 h-4 rounded-[3px] border shadow-sm transition-transform ${
-                                    cellIsYellow
-                                      ? "bg-gradient-to-b from-amber-300 to-amber-400 border-amber-500/80"
-                                      : "bg-gradient-to-b from-emerald-400 to-emerald-500 border-emerald-300/70"
-                                  }`}
-                                />
-                              );
-                            })}
-                          </div>
-                        )}
-                      </RowWrapper>
-                    );
-                  })}
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           {/* Other Bays Quick Pick (Only shown when interactive row picker is open) */}
@@ -1039,6 +1074,7 @@
             <div className="max-w-7xl mx-auto mb-6">
               <XGridMapBoard
                 interactive={false}
+                gridZones={gridZones}
                 onClose={() => setShowHeaderGridMap(false)}
               />
             </div>
@@ -1461,6 +1497,7 @@
                                 >
                                   <XGridMapBoard
                                     interactive={true}
+                                    gridZones={gridZones}
                                     selectedGrid={row.grid}
                                     onSelectGrid={(gCode) => handleSelectGridFromMap(row.id, gCode)}
                                     onClose={() => setOpenGridPickerRowId(null)}
