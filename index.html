@@ -477,6 +477,10 @@
       // Active Row Visual Grid Picker ID
       const [openGridPickerRowId, setOpenGridPickerRowId] = useState(null);
 
+      // Remove Line Selection & Confirmation State
+      const [isRemoveMode, setIsRemoveMode] = useState(false);
+      const [rowPendingRemoval, setRowPendingRemoval] = useState(null);
+
       // Notification State
       const [notificationText, setNotificationText] = useState("");
       const [showNotificationEditor, setShowNotificationEditor] = useState(false);
@@ -695,6 +699,49 @@
         saveRowsToFirebase(updatedRows);
       };
 
+      // Activate Remove Line Selection Mode
+      const startRemoveLineMode = () => {
+        if (rows.length <= 1) return;
+        closeAllDrawers();
+        setOpenGridPickerRowId(null);
+        setActiveTab("tracker");
+        setIsRemoveMode(true);
+        setRowPendingRemoval(null);
+        setShowControlsMenu(false);
+      };
+
+      const cancelRemoveLineMode = () => {
+        setIsRemoveMode(false);
+        setRowPendingRemoval(null);
+      };
+
+      // Execute Confirmed Removal of Selected Line
+      const handleConfirmRemoveLine = () => {
+        if (!rowPendingRemoval || rows.length <= 1) return;
+        const targetRow = rowPendingRemoval.row;
+        const displayNum = rowPendingRemoval.displayIndex + 1;
+
+        const updatedRows = rows.filter(r => r.id !== targetRow.id);
+        saveRowsToFirebase(updatedRows);
+
+        const now = getCurrent24HourTimestamp();
+        const detailSummary = [targetRow.service, targetRow.grid].filter(Boolean).join(" / ");
+        const logEntry = {
+          id: Date.now(),
+          timestamp: now,
+          service: targetRow.service || "",
+          size: targetRow.size || "",
+          grid: targetRow.grid || "",
+          action: detailSummary
+            ? `Removed Line ${displayNum} (${detailSummary})`
+            : `Removed Line ${displayNum}`
+        };
+        firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
+
+        setRowPendingRemoval(null);
+        setIsRemoveMode(false);
+      };
+
       // Grid Zones Management Handlers
       const handleZoneFieldChange = (id, key, val) => {
         const updated = gridZones.map(z => {
@@ -823,17 +870,20 @@
 
       // Drag and Drop Logic
       const handleDragStart = (index) => {
+        if (isRemoveMode) return;
         setDraggedIndex(index);
       };
 
       const handleDragOver = (e, index) => {
         e.preventDefault();
+        if (isRemoveMode) return;
         if (dragOverIndex !== index) {
           setDragOverIndex(index);
         }
       };
 
       const handleDrop = (dropIndex) => {
+        if (isRemoveMode) return;
         if (draggedIndex === null || draggedIndex === dropIndex) {
           setDraggedIndex(null);
           setDragOverIndex(null);
@@ -885,12 +935,6 @@
           overridden: false
         };
         saveRowsToFirebase([...rows, newRow]);
-        setShowControlsMenu(false);
-      };
-
-      const removeRow = () => {
-        if (rows.length <= 1) return;
-        saveRowsToFirebase(rows.slice(0, -1));
         setShowControlsMenu(false);
       };
 
@@ -947,6 +991,55 @@
             {P_PARK_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
 
+          {/* Confirmation Modal for Removing a Selected Line */}
+          {rowPendingRemoval && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-800 border border-red-500/50 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center gap-2.5 text-red-400">
+                  <span className="text-xl">⚠️</span>
+                  <h3 className="text-lg font-bold text-white">Confirm Line Removal</h3>
+                </div>
+
+                <p className="text-sm text-slate-300">
+                  Are you sure you want to permanently remove <strong className="text-white">Line {rowPendingRemoval.displayIndex + 1}</strong>?
+                </p>
+
+                <div className="bg-slate-900/90 border border-slate-700 rounded-xl p-3.5 text-xs text-slate-300 flex flex-wrap gap-3">
+                  {!rowPendingRemoval.row.service && !rowPendingRemoval.row.size && !rowPendingRemoval.row.grid && !rowPendingRemoval.row.pPark ? (
+                    <span className="text-slate-400 italic">Empty row</span>
+                  ) : (
+                    <>
+                      <span>Service: <strong className="text-blue-400">{rowPendingRemoval.row.service || "--"}</strong></span>
+                      <span>•</span>
+                      <span>Size: <strong className="text-white">{rowPendingRemoval.row.size || "--"}</strong></span>
+                      <span>•</span>
+                      <span>Grid: <strong className="text-emerald-400">{rowPendingRemoval.row.grid || "--"}</strong></span>
+                      <span>•</span>
+                      <span>P Park: <strong className="text-purple-300">{rowPendingRemoval.row.pPark || "--"}</strong></span>
+                    </>
+                  )}
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setRowPendingRemoval(null)}
+                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmRemoveLine}
+                    className="px-4 py-2 rounded-lg bg-red-600 hover:bg-red-500 text-white text-sm font-semibold shadow-lg transition"
+                  >
+                    Yes, Remove Line {rowPendingRemoval.displayIndex + 1}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           <header className="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
             <div>
               <h1 className="text-2xl font-bold text-white flex items-center gap-2">
@@ -967,7 +1060,10 @@
                   Active Tracker
                 </button>
                 <button
-                  onClick={() => setActiveTab("history")}
+                  onClick={() => {
+                    setIsRemoveMode(false);
+                    setActiveTab("history");
+                  }}
                   className={`px-4 py-2 rounded-md text-sm font-medium ${activeTab === "history" ? "bg-blue-600 text-white" : "text-slate-400"}`}
                 >
                   Movement Log
@@ -1024,7 +1120,7 @@
                       <span>➕</span> Add Line
                     </button>
                     <button
-                      onClick={removeRow}
+                      onClick={startRemoveLineMode}
                       disabled={rows.length <= 1}
                       className="w-full text-left px-4 py-2.5 text-sm text-red-400 hover:bg-slate-700/60 disabled:opacity-40 flex items-center gap-2 border-b border-slate-700/50"
                     >
@@ -1365,6 +1461,25 @@
           {/* ACTIVE TRACKER TAB */}
           {activeTab === "tracker" && (
             <main className="max-w-7xl mx-auto space-y-4">
+              {/* Remove Line Mode Instruction Banner */}
+              {isRemoveMode && (
+                <div className="w-full bg-red-500/15 border border-red-500/50 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg">
+                  <div className="flex items-center gap-3">
+                    <span className="text-lg">🗑️</span>
+                    <span className="text-red-200 font-semibold text-sm md:text-base">
+                      REMOVE LINE MODE: Click any row below to select it for removal
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={cancelRemoveLineMode}
+                    className="text-red-200 hover:text-white bg-red-500/20 hover:bg-red-500/40 border border-red-500/40 px-3 py-1.5 rounded-lg text-xs font-bold transition"
+                  >
+                    ✕ Cancel
+                  </button>
+                </div>
+              )}
+
               {/* Full-Width Stretching Notification Banner */}
               {notificationText && (
                 <div className="w-full bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-amber-500/20 border border-amber-500/40 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg">
@@ -1396,7 +1511,7 @@
               )}
 
               {/* Grid Table Container */}
-              <div className="bg-slate-800/80 rounded-xl border border-slate-700 shadow-2xl">
+              <div className={`bg-slate-800/80 rounded-xl border shadow-2xl ${isRemoveMode ? "border-red-500/50" : "border-slate-700"}`}>
                 <div className="overflow-x-auto md:overflow-visible">
                   <table className="w-full text-left border-collapse">
                     <thead>
@@ -1421,12 +1536,19 @@
                         return (
                           <tr
                             key={row.id}
-                            draggable
+                            draggable={!isRemoveMode}
                             onDragStart={() => handleDragStart(rows.findIndex(r => r.id === row.id))}
                             onDragOver={(e) => handleDragOver(e, index)}
                             onDrop={() => handleDrop(index)}
-                            className={`transition-all duration-150 ${
-                              isOriginalDragged
+                            onClick={() => {
+                              if (isRemoveMode) {
+                                setRowPendingRemoval({ row, displayIndex: index });
+                              }
+                            }}
+                            className={`transition-all duration-150 group ${
+                              isRemoveMode
+                                ? "cursor-pointer hover:bg-red-500/20"
+                                : isOriginalDragged
                                 ? "opacity-40 bg-blue-900/30 border-2 border-dashed border-blue-500"
                                 : isHoverTarget
                                 ? "bg-blue-600/20 border-t-2 border-blue-400"
@@ -1440,8 +1562,9 @@
                             <td className="py-3 px-4 align-top">
                               <select
                                 value={row.service}
+                                disabled={isRemoveMode}
                                 onChange={(e) => handleCommitRowChange(row.id, "service", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                className={`w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${isRemoveMode ? "pointer-events-none" : ""}`}
                               >
                                 <option value="">-- Select --</option>
                                 {services.map((svc) => <option key={svc} value={svc}>{svc}</option>)}
@@ -1450,8 +1573,9 @@
                             <td className="py-3 px-4 align-top">
                               <select
                                 value={row.size}
+                                disabled={isRemoveMode}
                                 onChange={(e) => handleCommitRowChange(row.id, "size", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                className={`w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${isRemoveMode ? "pointer-events-none" : ""}`}
                               >
                                 <option value="">-- Select --</option>
                                 {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1462,10 +1586,11 @@
                                 <input
                                   type="text"
                                   data-grid-input="true"
+                                  disabled={isRemoveMode}
                                   placeholder="Select or Type (X1, TF1, T1)"
                                   value={row.grid}
-                                  onFocus={() => setOpenGridPickerRowId(row.id)}
-                                  onClick={() => setOpenGridPickerRowId(row.id)}
+                                  onFocus={() => !isRemoveMode && setOpenGridPickerRowId(row.id)}
+                                  onClick={() => !isRemoveMode && setOpenGridPickerRowId(row.id)}
                                   onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
                                   onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
                                   onKeyDown={(e) => {
@@ -1475,13 +1600,14 @@
                                   }}
                                   className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 pr-8 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
                                     showWarning ? "border-amber-500/80" : "border-slate-700"
-                                  }`}
+                                  } ${isRemoveMode ? "pointer-events-none" : ""}`}
                                 />
                                 <button
                                   type="button"
                                   data-grid-input="true"
+                                  disabled={isRemoveMode}
                                   onClick={() => setOpenGridPickerRowId(isPickerOpen ? null : row.id)}
-                                  className="absolute right-2 text-slate-400 hover:text-white text-xs p-1"
+                                  className={`absolute right-2 text-slate-400 hover:text-white text-xs p-1 ${isRemoveMode ? "pointer-events-none" : ""}`}
                                   title="Toggle X Grid Map Picker"
                                 >
                                   {isPickerOpen ? "▲" : "▼"}
@@ -1489,7 +1615,7 @@
                               </div>
 
                               {/* Interactive X Grid Map Popover */}
-                              {isPickerOpen && (
+                              {isPickerOpen && !isRemoveMode && (
                                 <div
                                   ref={gridPickerRef}
                                   onMouseDown={(e) => e.preventDefault()}
@@ -1525,7 +1651,10 @@
                                       </span>
                                       <button
                                         type="button"
-                                        onClick={() => handleOverrideRow(row.id)}
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOverrideRow(row.id);
+                                        }}
                                         className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-200 border border-amber-500/40 transition"
                                       >
                                         Override
@@ -1545,22 +1674,29 @@
                               <input
                                 type="text"
                                 list="p-park-list"
+                                disabled={isRemoveMode}
                                 placeholder="Select or Type (P1-P11)"
                                 value={row.pPark}
                                 onChange={(e) => handleRowInputChange(row.id, "pPark", e.target.value)}
                                 onBlur={(e) => handleCommitRowChange(row.id, "pPark", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                className={`w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${isRemoveMode ? "pointer-events-none" : ""}`}
                               />
                             </td>
                             <td className="py-3 px-4 align-top pt-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
                             <td className="py-3 px-4 align-top pt-3.5 text-right">
-                              <button
-                                onClick={() => clearRow(row.id)}
-                                disabled={!row.service && !row.size && !row.grid && !row.pPark}
-                                className="text-red-400 text-xs px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 rounded-md disabled:opacity-30 transition"
-                              >
-                                Clear
-                              </button>
+                              {isRemoveMode ? (
+                                <span className="inline-block text-red-300 group-hover:text-white bg-red-600/30 group-hover:bg-red-600 border border-red-500/50 text-xs font-semibold px-2.5 py-1.5 rounded-md transition">
+                                  Select to Remove
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={() => clearRow(row.id)}
+                                  disabled={!row.service && !row.size && !row.grid && !row.pPark}
+                                  className="text-red-400 text-xs px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 rounded-md disabled:opacity-30 transition"
+                                >
+                                  Clear
+                                </button>
+                              )}
                             </td>
                           </tr>
                         );
