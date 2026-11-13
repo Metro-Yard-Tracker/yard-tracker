@@ -31,10 +31,12 @@
     }
 
     // Grid Options: X1-X42, TF1-TF7, T1-T4
+    const TF_OPTIONS = Array.from({ length: 7 }, (_, i) => `TF${i + 1}`);
+    const T_OPTIONS = Array.from({ length: 4 }, (_, i) => `T${i + 1}`);
     const GRID_X_OPTIONS = [
       ...Array.from({ length: 42 }, (_, i) => `X${i + 1}`),
-      ...Array.from({ length: 7 }, (_, i) => `TF${i + 1}`),
-      ...Array.from({ length: 4 }, (_, i) => `T${i + 1}`)
+      ...TF_OPTIONS,
+      ...T_OPTIONS
     ];
 
     const P_PARK_OPTIONS = Array.from({ length: 11 }, (_, i) => `P${i + 1}`);
@@ -57,9 +59,9 @@
       { id: 4, grid: "X41", service: "120", size: "40ft" }
     ];
 
-    // Bay Size & Slot Definitions (X37 and X42 treated as 20ft; X38-X41 treated as 40ft)
+    // Bay Size & Slot Definitions matching yard map
     const GRIDS_20FT = new Set([
-      "X1", "X12", "X13", "X18", "X19", "X24", "X25", "X30",
+      "X1", "X7", "X12", "X13", "X18", "X19", "X24", "X25", "X30",
       "X31", "X36", "X37", "X42"
     ]);
 
@@ -74,6 +76,45 @@
     ]);
 
     const GRIDS_INACTIVE = new Set(["X6"]);
+
+    // 7 Vertical Blocks matching spreadsheet map
+    const YARD_MAP_BLOCKS = [
+      {
+        title: "X1–X6",
+        letters: ["A", "B", "C", "D"],
+        grids: ["X1", "X2", "X3", "X4", "X5", "X6"]
+      },
+      {
+        title: "X7–X12",
+        letters: ["A", "B", "C", "D"],
+        grids: ["X7", "X8", "X9", "X10", "X11", "X12"]
+      },
+      {
+        title: "X13–X18",
+        letters: ["A", "B", "C", "D"],
+        grids: ["X13", "X14", "X15", "X16", "X17", "X18"]
+      },
+      {
+        title: "X19–X24",
+        letters: ["A", "B", "C", "D"],
+        grids: ["X19", "X20", "X21", "X22", "X23", "X24"]
+      },
+      {
+        title: "X25–X30",
+        letters: ["A", "B", "C", "D"],
+        grids: ["X25", "X26", "X27", "X28", "X29", "X30"]
+      },
+      {
+        title: "X31–X36",
+        letters: ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
+        grids: ["X31", "X32", "X33", "X34", "X35", "X36"]
+      },
+      {
+        title: "X37–X42",
+        letters: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
+        grids: ["X37", "X38", "X39", "X40", "X41", "X42"]
+      }
+    ];
 
     // Helper: Get exact slot letters for any X-Grid
     const getGridSlotInfo = (gridStr) => {
@@ -137,7 +178,6 @@
         issues.push(`${g} is inactive/blocked on yard map`);
       }
 
-      // Check Dedicated Service/Size rule first if present
       if (dedicatedRule) {
         const svcMismatch = row.service && dedicatedRule.service && row.service !== dedicatedRule.service;
         const sizeMismatch = row.size && dedicatedRule.size && row.size !== dedicatedRule.size;
@@ -147,7 +187,6 @@
         }
       }
 
-      // Check physical bay size compatibility (unless already covered by dedicated size rule)
       if (slotInfo && (slotInfo.baySize === "20ft" || slotInfo.baySize === "40ft")) {
         if (row.size && row.size !== slotInfo.baySize) {
           const sizeMsg = `Grid cannot be used for ${row.size} (${slotInfo.baySize} bay)`;
@@ -204,6 +243,190 @@
       return `${month} ${day}, ${hours}${minutes}`;
     };
 
+    // Reusable Clean Artistic X Grid Map Component (No numbers in cells, no P-Parks)
+    function XGridMapBoard({ selectedGrid, onSelectGrid, onClose, interactive = false }) {
+      const normalizedSelected = (selectedGrid || "").trim().toUpperCase();
+
+      return (
+        <div className="bg-slate-950/95 backdrop-blur-md border border-slate-700/90 rounded-2xl shadow-2xl p-4 w-full overflow-x-auto">
+          {/* Header & Legend */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3.5 border-b border-slate-800/90">
+            <div className="flex flex-wrap items-center gap-4 text-xs">
+              <span className="font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
+                <span className="text-blue-400">🗺️</span> X Grid Map
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
+                <span className="w-3.5 h-3.5 rounded-[3px] bg-gradient-to-b from-amber-300 to-amber-400 border border-amber-500/80 shadow-sm inline-block"></span>
+                20ft Bay
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-emerald-300 font-medium">
+                <span className="w-3.5 h-3.5 rounded-[3px] bg-gradient-to-b from-emerald-400 to-emerald-500 border border-emerald-300/70 shadow-sm inline-block"></span>
+                40ft Bay
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-slate-300 font-medium">
+                <span className="w-3.5 h-3.5 rounded-[3px] bg-white/95 border border-slate-400 inline-block"></span>
+                Blocked Slot
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-slate-500 font-medium">
+                <span className="w-3.5 h-3.5 rounded-[3px] bg-slate-900 border border-slate-800 inline-block"></span>
+                Inactive
+              </span>
+            </div>
+
+            <div className="flex items-center gap-2">
+              {interactive && (
+                <span className="text-[11px] text-blue-300/90 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-full">
+                  Click a bay to select
+                </span>
+              )}
+              <button
+                type="button"
+                onClick={onClose}
+                className="text-slate-400 hover:text-white text-xs bg-slate-800/90 hover:bg-slate-700 px-2.5 py-1 rounded-lg border border-slate-700 transition"
+              >
+                ✕ Close
+              </button>
+            </div>
+          </div>
+
+          {/* 7 Vertical Blocks with Generous Spacing */}
+          <div className="flex items-start justify-between gap-3.5 pb-1 min-w-max">
+            {YARD_MAP_BLOCKS.map((block) => (
+              <div
+                key={block.title}
+                className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 shadow-inner"
+              >
+                {/* Horizontal Slot Letters Row (A B C D ... J) */}
+                <div className="flex items-center mb-1.5">
+                  <div className="w-9 shrink-0"></div>
+                  <div className="flex gap-1">
+                    {block.letters.map((letter) => (
+                      <div
+                        key={letter}
+                        className="w-4 text-center text-[10px] font-bold text-slate-400 tracking-wide"
+                      >
+                        {letter}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Vertical X-Grid Rows */}
+                <div className="space-y-1.5">
+                  {block.grids.map((gCode) => {
+                    const is20 = GRIDS_20FT.has(gCode);
+                    const isInactive = GRIDS_INACTIVE.has(gCode);
+                    const isCurrentSelected = interactive && normalizedSelected === gCode;
+                    const isHybridVisual = gCode === "X37" || gCode === "X38" || gCode === "X41" || gCode === "X42";
+
+                    const RowWrapper = interactive ? "button" : "div";
+
+                    return (
+                      <RowWrapper
+                        key={gCode}
+                        {...(interactive
+                          ? {
+                              type: "button",
+                              onClick: () => onSelectGrid(gCode)
+                            }
+                          : {})}
+                        className={`w-full flex items-center rounded-md px-1 py-0.5 transition-all ${
+                          interactive ? "cursor-pointer" : ""
+                        } ${
+                          isCurrentSelected
+                            ? "ring-2 ring-blue-400 bg-blue-500/20 shadow-md"
+                            : interactive
+                            ? "hover:bg-slate-800/90 hover:ring-1 hover:ring-blue-400/50"
+                            : "hover:bg-slate-800/40"
+                        }`}
+                        title={
+                          isInactive
+                            ? `${gCode} — Inactive`
+                            : `${gCode} (${is20 ? "20ft Bay" : "40ft Bay"})`
+                        }
+                      >
+                        {/* X-Grid Label on Left */}
+                        <span
+                          className={`w-8 shrink-0 text-left text-[11px] font-bold font-mono transition-colors ${
+                            isInactive
+                              ? "text-slate-600"
+                              : isCurrentSelected
+                              ? "text-blue-300"
+                              : "text-slate-300"
+                          }`}
+                        >
+                          {gCode}
+                        </span>
+
+                        {/* Clean Color-Coded Slot Rectangles (No text or numbers inside) */}
+                        {isInactive ? (
+                          <div
+                            style={{ width: `${block.letters.length * 20 - 4}px` }}
+                            className="h-4 bg-slate-950 border border-slate-800/90 rounded-[3px]"
+                          />
+                        ) : (
+                          <div className="flex gap-1">
+                            {block.letters.map((letter, idx) => {
+                              const isBlockedSlotA = (gCode === "X4" || gCode === "X5") && letter === "A";
+                              if (isBlockedSlotA) {
+                                return (
+                                  <div
+                                    key={letter}
+                                    className="w-4 h-4 bg-white/95 border border-slate-400 rounded-[3px] shadow-sm"
+                                  />
+                                );
+                              }
+
+                              // Outer slots A-C (idx 0-2) and H-J (idx 7-9) on X37,X38,X41,X42 are yellow 20ft; center D-G are green 40ft
+                              const cellIsYellow = isHybridVisual
+                                ? idx <= 2 || idx >= 7
+                                : is20;
+
+                              return (
+                                <div
+                                  key={letter}
+                                  className={`w-4 h-4 rounded-[3px] border shadow-sm transition-transform ${
+                                    cellIsYellow
+                                      ? "bg-gradient-to-b from-amber-300 to-amber-400 border-amber-500/80"
+                                      : "bg-gradient-to-b from-emerald-400 to-emerald-500 border-emerald-300/70"
+                                  }`}
+                                />
+                              );
+                            })}
+                          </div>
+                        )}
+                      </RowWrapper>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Other Bays Quick Pick (Only shown when interactive row picker is open) */}
+          {interactive && (
+            <div className="mt-3 pt-2.5 border-t border-slate-800/90 flex flex-wrap items-center gap-1.5 text-xs">
+              <span className="text-slate-400 font-semibold mr-1">Other Bays:</span>
+              {[...TF_OPTIONS, ...T_OPTIONS].map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  onClick={() => onSelectGrid(code)}
+                  className={`px-2.5 py-1 rounded-md border font-mono text-[11px] font-semibold transition ${
+                    normalizedSelected === code
+                      ? "bg-blue-600 border-blue-400 text-white"
+                      : "bg-slate-900 hover:bg-blue-600/80 text-slate-300 hover:text-white border-slate-700"
+                  }`}
+                >
+                  {code}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
     function App() {
       const [activeTab, setActiveTab] = useState("tracker");
       const [rows, setRows] = useState(INITIAL_ROWS);
@@ -212,6 +435,12 @@
       const [dedicatedGrids, setDedicatedGrids] = useState(DEFAULT_DEDICATED_GRIDS);
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
+
+      // Header X Grid Map Reference Panel Toggle
+      const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
+
+      // Active Row Visual Grid Picker ID
+      const [openGridPickerRowId, setOpenGridPickerRowId] = useState(null);
 
       // Notification State
       const [notificationText, setNotificationText] = useState("");
@@ -239,11 +468,17 @@
       const [logSearchQuery, setLogSearchQuery] = useState("");
 
       const dropdownRef = useRef(null);
+      const gridPickerRef = useRef(null);
 
       useEffect(() => {
         const handleClickOutside = (event) => {
           if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
             setShowControlsMenu(false);
+          }
+          if (gridPickerRef.current && !gridPickerRef.current.contains(event.target)) {
+            if (!event.target.dataset || !event.target.dataset.gridInput) {
+              setOpenGridPickerRowId(null);
+            }
           }
         };
         document.addEventListener("mousedown", handleClickOutside);
@@ -384,6 +619,12 @@
 
           firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
         }
+      };
+
+      // Handle clicking a grid tile inside the Row X Grid Map Dropdown
+      const handleSelectGridFromMap = (rowId, gridCode) => {
+        handleCommitRowChange(rowId, "grid", gridCode);
+        setOpenGridPickerRowId(null);
       };
 
       const handleOverrideRow = (id) => {
@@ -667,14 +908,11 @@
 
       return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-6 font-sans">
-          <datalist id="grid-x-list">
-            {GRID_X_OPTIONS.map(opt => <option key={opt} value={opt} />)}
-          </datalist>
           <datalist id="p-park-list">
             {P_PARK_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
 
-          <header className="max-w-6xl mx-auto mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
+          <header className="max-w-7xl mx-auto mb-6 flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800 pb-4">
             <div>
               <h1 className="text-2xl font-bold text-white flex items-center gap-2">
                 Yard Grid Planner
@@ -685,7 +923,7 @@
               <p className="text-sm text-slate-400">{rows.length} Active Container Lines (Drag handle :: to reorder)</p>
             </div>
 
-            <div className="flex items-center gap-3">
+            <div className="flex flex-wrap items-center gap-3">
               <div className="flex bg-slate-800 p-1 rounded-lg border border-slate-700">
                 <button
                   onClick={() => setActiveTab("tracker")}
@@ -700,6 +938,19 @@
                   Movement Log
                 </button>
               </div>
+
+              {/* X Grid Map Toggle Button Next to Controls */}
+              <button
+                onClick={() => setShowHeaderGridMap(!showHeaderGridMap)}
+                className={`px-4 py-2 border text-sm font-medium rounded-lg flex items-center gap-2 transition ${
+                  showHeaderGridMap
+                    ? "bg-blue-600/20 border-blue-500/60 text-blue-300 shadow-inner"
+                    : "bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-200"
+                }`}
+              >
+                <span>🗺️ X Grid Map</span>
+                <span className="text-xs text-slate-400">{showHeaderGridMap ? "▲" : "▼"}</span>
+              </button>
 
               {/* Controls Dropdown Menu */}
               <div className="relative" ref={dropdownRef}>
@@ -783,9 +1034,19 @@
             </div>
           </header>
 
+          {/* Header X Grid Map Dropdown Panel */}
+          {showHeaderGridMap && (
+            <div className="max-w-7xl mx-auto mb-6">
+              <XGridMapBoard
+                interactive={false}
+                onClose={() => setShowHeaderGridMap(false)}
+              />
+            </div>
+          )}
+
           {/* Manage Dedicated Service Grids Drawer */}
           {showManageDedicated && (
-            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-cyan-500/40 p-5 rounded-xl shadow-xl">
+            <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-cyan-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <div>
                   <h3 className="text-sm font-bold text-cyan-400 uppercase tracking-wider flex items-center gap-2">
@@ -802,7 +1063,6 @@
                     <span className="text-slate-400 font-medium">Grid:</span>
                     <input
                       type="text"
-                      list="grid-x-list"
                       value={item.grid}
                       onChange={(e) => handleDedicatedFieldChange(item.id, "grid", e.target.value)}
                       className="w-24 bg-slate-800 border border-slate-700 rounded-md px-2.5 py-1 text-white font-bold focus:outline-none focus:ring-1 focus:ring-cyan-500"
@@ -857,7 +1117,7 @@
 
           {/* Manage Grid Zones (P-Park Auto-Fill Rules) Drawer */}
           {showManageZones && (
-            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-purple-500/40 p-5 rounded-xl shadow-xl">
+            <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-purple-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <div>
                   <h3 className="text-sm font-bold text-purple-400 uppercase tracking-wider flex items-center gap-2">
@@ -935,7 +1195,7 @@
 
           {/* Export to Excel Drawer */}
           {showExportDrawer && (
-            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-emerald-500/40 p-5 rounded-xl shadow-xl">
+            <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-emerald-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-sm font-bold text-emerald-400 uppercase tracking-wider flex items-center gap-2">
                   <span>📊</span> Select Services to Export (.xlsx)
@@ -983,7 +1243,7 @@
 
           {/* Add / Edit Notification Drawer */}
           {showNotificationEditor && (
-            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-amber-500/40 p-5 rounded-xl shadow-xl">
+            <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-amber-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
                   <span>📢</span> {notificationText ? "Edit Notification Banner" : "Set Yard Banner Notification"}
@@ -1020,7 +1280,7 @@
 
           {/* Manage Services Drawer */}
           {showManageServices && (
-            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-blue-500/40 p-5 rounded-xl shadow-xl">
+            <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-blue-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-sm font-bold text-blue-400 uppercase tracking-wider">Manage Services List</h3>
                 <button onClick={() => setShowManageServices(false)} className="text-slate-400 hover:text-white text-xs">✕ Close</button>
@@ -1068,7 +1328,7 @@
 
           {/* ACTIVE TRACKER TAB */}
           {activeTab === "tracker" && (
-            <main className="max-w-6xl mx-auto space-y-4">
+            <main className="max-w-7xl mx-auto space-y-4">
               {/* Full-Width Stretching Notification Banner */}
               {notificationText && (
                 <div className="w-full bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-amber-500/20 border border-amber-500/40 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg">
@@ -1100,18 +1360,18 @@
               )}
 
               {/* Grid Table Container */}
-              <div className="bg-slate-800/80 rounded-xl border border-slate-700 overflow-hidden shadow-2xl">
-                <div className="overflow-x-auto">
+              <div className="bg-slate-800/80 rounded-xl border border-slate-700 shadow-2xl">
+                <div className="overflow-x-auto md:overflow-visible">
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-700">
-                        <th className="py-3.5 px-4 w-16 text-center">#</th>
+                        <th className="py-3.5 px-4 w-16 text-center rounded-tl-xl">#</th>
                         <th className="py-3.5 px-4">Service</th>
                         <th className="py-3.5 px-4">Size</th>
                         <th className="py-3.5 px-4">Grid</th>
                         <th className="py-3.5 px-4">P Park</th>
                         <th className="py-3.5 px-4">Last Updated</th>
-                        <th className="py-3.5 px-4 text-right">Action</th>
+                        <th className="py-3.5 px-4 text-right rounded-tr-xl">Action</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-700/50">
@@ -1120,6 +1380,7 @@
                         const isHoverTarget = dragOverIndex === index;
                         const status = evaluateRowGridStatus(row, dedicatedGrids);
                         const showWarning = status?.hasConflict && !row.overridden;
+                        const isPickerOpen = openGridPickerRowId === row.id;
 
                         return (
                           <tr
@@ -1160,34 +1421,66 @@
                                 {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
                               </select>
                             </td>
-                            <td className="py-3 px-4 align-top">
-                              <input
-                                type="text"
-                                list="grid-x-list"
-                                placeholder="Select or Type (X1, TF1, T1)"
-                                value={row.grid}
-                                onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
-                                onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
-                                className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
-                                  showWarning ? "border-amber-500/80" : "border-slate-700"
-                                }`}
-                              />
+                            <td className="py-3 px-4 align-top relative">
+                              <div className="relative flex items-center">
+                                <input
+                                  type="text"
+                                  data-grid-input="true"
+                                  placeholder="Select or Type (X1, TF1, T1)"
+                                  value={row.grid}
+                                  onFocus={() => setOpenGridPickerRowId(row.id)}
+                                  onClick={() => setOpenGridPickerRowId(row.id)}
+                                  onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
+                                  onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
+                                  onKeyDown={(e) => {
+                                    if (e.key === "Enter" || e.key === "Escape") {
+                                      setOpenGridPickerRowId(null);
+                                    }
+                                  }}
+                                  className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 pr-8 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                                    showWarning ? "border-amber-500/80" : "border-slate-700"
+                                  }`}
+                                />
+                                <button
+                                  type="button"
+                                  data-grid-input="true"
+                                  onClick={() => setOpenGridPickerRowId(isPickerOpen ? null : row.id)}
+                                  className="absolute right-2 text-slate-400 hover:text-white text-xs p-1"
+                                  title="Toggle X Grid Map Picker"
+                                >
+                                  {isPickerOpen ? "▲" : "▼"}
+                                </button>
+                              </div>
 
-                              {/* Option 1: Slot Breakdown Pill + Override Controls */}
+                              {/* Interactive X Grid Map Popover */}
+                              {isPickerOpen && (
+                                <div
+                                  ref={gridPickerRef}
+                                  onMouseDown={(e) => e.preventDefault()}
+                                  className="fixed md:absolute left-2 right-2 md:left-[-190px] md:right-auto mt-2 z-50 w-auto md:w-[980px] max-w-[96vw]"
+                                >
+                                  <XGridMapBoard
+                                    interactive={true}
+                                    selectedGrid={row.grid}
+                                    onSelectGrid={(gCode) => handleSelectGridFromMap(row.id, gCode)}
+                                    onClose={() => setOpenGridPickerRowId(null)}
+                                  />
+                                </div>
+                              )}
+
+                              {/* Slot Breakdown Pill + Override Controls */}
                               {status && (
                                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                  {/* Slot Pill */}
                                   {status.slotInfo && status.slotInfo.baySize !== "INACTIVE" && (
                                     <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${
                                       status.slotInfo.baySize === "20ft"
-                                        ? "bg-yellow-500/15 text-yellow-300 border-yellow-500/30"
+                                        ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
                                         : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
                                     }`}>
                                       {status.slotInfo.baySize}: {status.slotInfo.slots}
                                     </span>
                                   )}
 
-                                  {/* Conflict Warning + Override Button */}
                                   {showWarning && (
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       <span className="text-[11px] text-amber-400 font-medium">
@@ -1203,7 +1496,6 @@
                                     </div>
                                   )}
 
-                                  {/* Overridden Confirmation Tag */}
                                   {status.hasConflict && row.overridden && (
                                     <span className="text-[11px] text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded font-medium">
                                       ✓ Overridden
@@ -1244,7 +1536,7 @@
           )}
 
           {activeTab === "history" && (
-            <main className="max-w-6xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-5 space-y-4 shadow-2xl">
+            <main className="max-w-7xl mx-auto bg-slate-800/80 rounded-xl border border-slate-700 p-5 space-y-4 shadow-2xl">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
                 <div>
                   <h2 className="text-lg font-semibold text-white">Previous Moves & History</h2>
