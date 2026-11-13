@@ -153,7 +153,8 @@
       pPark: "",
       lastUpdated: "",
       overridden: false,
-      sharedGridOverridden: false
+      sharedGridOverridden: false,
+      trainBlocked: false
     }));
 
     // Helper: Lookup assigned P-Park for an X-Grid
@@ -166,7 +167,7 @@
       return zone ? zone.pPark : null;
     };
 
-    // Helper: Build dynamic P-Park segments for a vertical block (handles full or split blocks)
+    // Helper: Build dynamic P-Park segments for a vertical block
     const getBlockPParkSegments = (grids, zones) => {
       const segments = [];
       grids.forEach((gCode) => {
@@ -190,6 +191,10 @@
       const dedicatedRule = dedicatedGrids.find(d => d.grid.trim().toUpperCase() === g);
 
       const issues = [];
+
+      if (row.trainBlocked) {
+        issues.push(`🛑 Grid blocked for train load-out`);
+      }
 
       if (slotInfo && slotInfo.baySize === "INACTIVE") {
         issues.push(`${g} is inactive/blocked on yard map`);
@@ -217,11 +222,11 @@
         slotInfo,
         dedicatedRule,
         issues,
-        hasConflict: issues.length > 0
+        hasConflict: issues.length > 0 || row.trainBlocked
       };
     };
 
-    // Helper: Convert any date or timestamp string to 4-Digit 24-Hour format (e.g., "Nov 11, 1300")
+    // Helper: Convert any date or timestamp string to 4-Digit 24-Hour format
     const formatTo24Hour = (timeStr) => {
       if (!timeStr) return "--";
 
@@ -260,19 +265,15 @@
       return `${month} ${day}, ${hours}${minutes}`;
     };
 
-    // Helper: Format Service + Size label (e.g., "Service 120 (40ft)")
     const formatServiceAndSize = (service, size) => {
       const svcText = service ? `Service ${service}` : "Unassigned Service";
       return size ? `${svcText} (${size})` : svcText;
     };
 
-    // Reusable Clean Artistic X Grid Map Component with Dynamic P-Park Footer Bar
-    function XGridMapBoard({ selectedGrid, onSelectGrid, onClose, gridZones, interactive = false }) {
-      const normalizedSelected = (selectedGrid || "").trim().toUpperCase();
-
+    // Reusable Clean Artistic X Grid Map Component
+    function XGridMapBoard({ selectedGrid, onClose, gridZones }) {
       return (
         <div className="bg-slate-950/95 backdrop-blur-md border border-slate-700/90 rounded-2xl shadow-2xl p-4 w-full overflow-x-auto">
-          {/* Header & Legend */}
           <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3.5 border-b border-slate-800/90">
             <div className="flex flex-wrap items-center gap-4 text-xs">
               <span className="font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
@@ -297,11 +298,6 @@
             </div>
 
             <div className="flex items-center gap-2">
-              {interactive && (
-                <span className="text-[11px] text-blue-300/90 bg-blue-500/10 border border-blue-500/20 px-2.5 py-0.5 rounded-full">
-                  Click a bay to select
-                </span>
-              )}
               <button
                 type="button"
                 onClick={onClose}
@@ -312,7 +308,6 @@
             </div>
           </div>
 
-          {/* 7 Vertical Blocks with Generous Spacing & Dynamic P-Park Zone Footer */}
           <div className="flex items-stretch justify-between gap-3.5 pb-1 min-w-max">
             {YARD_MAP_BLOCKS.map((block) => {
               const pParkSegments = getBlockPParkSegments(block.grids, gridZones);
@@ -323,7 +318,6 @@
                   className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 shadow-inner flex flex-col justify-between"
                 >
                   <div>
-                    {/* Horizontal Slot Letters Row (A B C D ... J) */}
                     <div className="flex items-center mb-1.5">
                       <div className="w-9 shrink-0"></div>
                       <div className="flex gap-1">
@@ -338,53 +332,25 @@
                       </div>
                     </div>
 
-                    {/* Vertical X-Grid Rows */}
                     <div className="space-y-1.5">
                       {block.grids.map((gCode) => {
                         const is20 = GRIDS_20FT.has(gCode);
                         const isInactive = GRIDS_INACTIVE.has(gCode);
-                        const isCurrentSelected = interactive && normalizedSelected === gCode;
-
-                        const RowWrapper = interactive ? "button" : "div";
 
                         return (
-                          <RowWrapper
+                          <div
                             key={gCode}
-                            {...(interactive
-                              ? {
-                                  type: "button",
-                                  onClick: () => onSelectGrid(gCode)
-                                }
-                              : {})}
-                            className={`w-full flex items-center rounded-md px-1 py-0.5 transition-all ${
-                              interactive ? "cursor-pointer" : ""
-                            } ${
-                              isCurrentSelected
-                                ? "ring-2 ring-blue-400 bg-blue-500/20 shadow-md"
-                                : interactive
-                                ? "hover:bg-slate-800/90 hover:ring-1 hover:ring-blue-400/50"
-                                : "hover:bg-slate-800/40"
-                            }`}
+                            className="w-full flex items-center rounded-md px-1 py-0.5 hover:bg-slate-800/40"
                             title={
                               isInactive
                                 ? `${gCode} — Inactive`
                                 : `${gCode} (${is20 ? "20ft Bay" : "40ft Bay"})`
                             }
                           >
-                            {/* X-Grid Label on Left */}
-                            <span
-                              className={`w-8 shrink-0 text-left text-[11px] font-bold font-mono transition-colors ${
-                                isInactive
-                                  ? "text-slate-600"
-                                  : isCurrentSelected
-                                  ? "text-blue-300"
-                                  : "text-slate-300"
-                              }`}
-                            >
+                            <span className="w-8 shrink-0 text-left text-[11px] font-bold font-mono text-slate-300">
                               {gCode}
                             </span>
 
-                            {/* Clean Color-Coded Slot Rectangles (No text or numbers inside) */}
                             {isInactive ? (
                               <div
                                 style={{ width: `${block.letters.length * 20 - 4}px` }}
@@ -416,13 +382,12 @@
                                 })}
                               </div>
                             )}
-                          </RowWrapper>
+                          </div>
                         );
                       })}
                     </div>
                   </div>
 
-                  {/* Dynamic P-Park Footer Bar (Updates automatically from gridZones) */}
                   <div className="mt-2.5 pt-1.5 border-t border-slate-800/90 flex items-center gap-1">
                     {pParkSegments.map((seg, idx) => {
                       const rangeLabel = pParkSegments.length > 1
@@ -444,27 +409,6 @@
               );
             })}
           </div>
-
-          {/* Other Bays Quick Pick (Only shown when interactive row picker is open) */}
-          {interactive && (
-            <div className="mt-3 pt-2.5 border-t border-slate-800/90 flex flex-wrap items-center gap-1.5 text-xs">
-              <span className="text-slate-400 font-semibold mr-1">Other Bays:</span>
-              {[...TF_OPTIONS, ...T_OPTIONS].map((code) => (
-                <button
-                  key={code}
-                  type="button"
-                  onClick={() => onSelectGrid(code)}
-                  className={`px-2.5 py-1 rounded-md border font-mono text-[11px] font-semibold transition ${
-                    normalizedSelected === code
-                      ? "bg-blue-600 border-blue-400 text-white"
-                      : "bg-slate-900 hover:bg-blue-600/80 text-slate-300 hover:text-white border-slate-700"
-                  }`}
-                >
-                  {code}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
       );
     }
@@ -484,6 +428,9 @@
 
       // Header X Grid Map Reference Panel Toggle
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
+
+      // Active Row Action Menu Open ID
+      const [openActionRowId, setOpenActionRowId] = useState(null);
 
       // Remove Line Selection & Confirmation State
       const [isRemoveMode, setIsRemoveMode] = useState(false);
@@ -520,6 +467,7 @@
 
       const dropdownRef = useRef(null);
       const filterDropdownRef = useRef(null);
+      const actionMenuRef = useRef(null);
 
       useEffect(() => {
         const handleClickOutside = (event) => {
@@ -528,6 +476,9 @@
           }
           if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) {
             setShowFilterDropdown(false);
+          }
+          if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
+            setOpenActionRowId(null);
           }
         };
         document.addEventListener("mousedown", handleClickOutside);
@@ -625,7 +576,6 @@
         setRows(updatedRows);
       };
 
-      // Core commit helper used both directly and after confirming a shared-grid override
       const finalizeRowCommit = (id, field, formattedValue, markSharedGridOverridden = false) => {
         const now = getCurrent24HourTimestamp();
         const baselineRows = committedRowsSnapshotRef.current;
@@ -691,7 +641,6 @@
         const currentRow = baselineRows.find(r => r.id === id);
         if (!currentRow) return;
 
-        // Check for duplicate grid across two DIFFERENT services when Grid or Service changes
         if (field === "grid" || field === "service") {
           const candidateGrid = (field === "grid" ? formattedValue : (currentRow.grid || "")).trim().toUpperCase();
           const candidateService = (field === "service" ? formattedValue : (currentRow.service || "")).trim();
@@ -751,6 +700,35 @@
         saveRowsToFirebase(updatedRows);
       };
 
+      // Manual Train Block Toggle Handler
+      const handleToggleTrainBlock = (id) => {
+        const now = getCurrent24HourTimestamp();
+        const targetRow = rows.find(r => r.id === id);
+        if (!targetRow) return;
+
+        const nextBlockedState = !targetRow.trainBlocked;
+        const updatedRows = rows.map(row => row.id === id ? {
+          ...row,
+          trainBlocked: nextBlockedState,
+          lastUpdated: now
+        } : row);
+
+        saveRowsToFirebase(updatedRows);
+        setOpenActionRowId(null);
+
+        const logEntry = {
+          id: Date.now(),
+          timestamp: now,
+          service: targetRow.service,
+          size: targetRow.size,
+          grid: targetRow.grid,
+          action: nextBlockedState 
+            ? `Blocked Line ${id} Grid (${targetRow.grid || "Unassigned"}) for Train Load-Out`
+            : `Unblocked Line ${id} Grid (${targetRow.grid || "Unassigned"})`
+        };
+        firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
+      };
+
       const clearRow = (id) => {
         const rowToClear = rows.find(r => r.id === id);
         if (!rowToClear) return;
@@ -764,7 +742,8 @@
           pPark: "",
           lastUpdated: now,
           overridden: false,
-          sharedGridOverridden: false
+          sharedGridOverridden: false,
+          trainBlocked: false
         } : row);
         
         const logEntry = {
@@ -778,9 +757,9 @@
 
         firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
         saveRowsToFirebase(updatedRows);
+        setOpenActionRowId(null);
       };
 
-      // Activate Remove Line Selection Mode
       const startRemoveLineMode = () => {
         if (rows.length <= 1) return;
         closeAllDrawers();
@@ -795,7 +774,6 @@
         setRowPendingRemoval(null);
       };
 
-      // Execute Confirmed Removal of Selected Line
       const handleConfirmRemoveLine = () => {
         if (!rowPendingRemoval || rows.length <= 1) return;
         const targetRow = rowPendingRemoval.row;
@@ -822,7 +800,6 @@
         setIsRemoveMode(false);
       };
 
-      // Grid Zones Management Handlers
       const handleZoneFieldChange = (id, key, val) => {
         const updated = gridZones.map(z => {
           if (z.id !== id) return z;
@@ -846,7 +823,6 @@
         saveGridZonesToFirebase(DEFAULT_GRID_ZONES);
       };
 
-      // Dedicated Grids Management Handlers
       const handleDedicatedFieldChange = (id, key, val) => {
         const updated = dedicatedGrids.map(d => {
           if (d.id !== id) return d;
@@ -869,7 +845,6 @@
         saveDedicatedGridsToFirebase(DEFAULT_DEDICATED_GRIDS);
       };
 
-      // Helper to close all drawers cleanly
       const closeAllDrawers = () => {
         setShowNotificationEditor(false);
         setShowManageServices(false);
@@ -878,7 +853,6 @@
         setShowManageDedicated(false);
       };
 
-      // Notification Management
       const openNotificationEditor = () => {
         closeAllDrawers();
         setNotificationInput(notificationText);
@@ -897,7 +871,6 @@
         setNotificationInput("");
       };
 
-      // Export to Excel Logic (Excludes # and Last Updated)
       const openExportDrawer = () => {
         closeAllDrawers();
         setSelectedServicesForExport([...services]);
@@ -932,10 +905,10 @@
 
         const worksheet = XLSX.utils.json_to_sheet(exportData);
         worksheet["!cols"] = [
-          { wch: 14 }, // Service
-          { wch: 10 }, // Size
-          { wch: 14 }, // Grid
-          { wch: 14 }  // P Park
+          { wch: 14 },
+          { wch: 10 },
+          { wch: 14 },
+          { wch: 14 }
         ];
 
         const workbook = XLSX.utils.book_new();
@@ -948,7 +921,6 @@
         setShowExportDrawer(false);
       };
 
-      // Service Filter toggle handler
       const toggleServiceFilter = (svc) => {
         if (selectedServiceFilters.includes(svc)) {
           setSelectedServiceFilters(selectedServiceFilters.filter(s => s !== svc));
@@ -965,7 +937,6 @@
         setSelectedServiceFilters([...services]);
       };
 
-      // Drag and Drop Logic
       const handleDragStart = (index) => {
         if (isRemoveMode || selectedServiceFilters.length > 0) return;
         setDraggedIndex(index);
@@ -1030,7 +1001,8 @@
           pPark: "",
           lastUpdated: "",
           overridden: false,
-          sharedGridOverridden: false
+          sharedGridOverridden: false,
+          trainBlocked: false
         };
         saveRowsToFirebase([...rows, newRow]);
         setShowControlsMenu(false);
@@ -1093,14 +1065,13 @@
           {showHeaderGridMap && (
             <div className="sticky top-4 z-40 max-w-7xl mx-auto mb-6 shadow-2xl transition-all">
               <XGridMapBoard
-                interactive={false}
                 gridZones={gridZones}
                 onClose={() => setShowHeaderGridMap(false)}
               />
             </div>
           )}
 
-          {/* Shared Grid / Different Service Conflict Pop-Up Modal */}
+          {/* Shared Grid Conflict Modal */}
           {sharedGridConflict && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-800 border border-amber-500/60 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
@@ -1139,7 +1110,7 @@
             </div>
           )}
 
-          {/* Confirmation Modal for Removing a Selected Line */}
+          {/* Remove Line Confirmation Modal */}
           {rowPendingRemoval && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-800 border border-red-500/50 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
@@ -1218,7 +1189,7 @@
                 </button>
               </div>
 
-              {/* X Grid Map Toggle Button Next to Controls */}
+              {/* X Grid Map Toggle Button */}
               <button
                 onClick={() => setShowHeaderGridMap(!showHeaderGridMap)}
                 className={`px-4 py-2 border text-sm font-medium rounded-lg flex items-center gap-2 transition ${
@@ -1378,13 +1349,13 @@
                   onClick={handleResetDedicated}
                   className="text-slate-400 hover:text-slate-200 text-xs underline"
                 >
-                  Reset to Default (X37: 192 40ft, X31: 192 20ft, X39: 194 40ft, X41: 120 40ft)
+                  Reset to Default
                 </button>
               </div>
             </div>
           )}
 
-          {/* Manage Grid Zones (P-Park Auto-Fill Rules) Drawer */}
+          {/* Manage Grid Zones Drawer */}
           {showManageZones && (
             <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-purple-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
@@ -1456,13 +1427,13 @@
                   onClick={handleResetZones}
                   className="text-slate-400 hover:text-slate-200 text-xs underline"
                 >
-                  Reset to Default (X1–12 P2, X13–24 P3, X25–30 P4, X31–42 P5)
+                  Reset to Default
                 </button>
               </div>
             </div>
           )}
 
-          {/* Export to Excel Drawer */}
+          {/* Export Drawer */}
           {showExportDrawer && (
             <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-emerald-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
@@ -1510,7 +1481,7 @@
             </div>
           )}
 
-          {/* Add / Edit Notification Drawer */}
+          {/* Notification Editor Drawer */}
           {showNotificationEditor && (
             <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-amber-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
@@ -1525,7 +1496,7 @@
                   type="text"
                   value={notificationInput}
                   onChange={(e) => setNotificationInput(e.target.value)}
-                  placeholder="Enter alert message (e.g., 'Grid X12 out of service until 1500')"
+                  placeholder="Enter alert message..."
                   className="bg-slate-900 border border-slate-700 text-white text-sm rounded-lg p-2.5 flex-1 focus:ring-2 focus:ring-amber-500"
                 />
                 <button type="submit" className="bg-amber-600 hover:bg-amber-500 text-white text-sm font-medium px-4 py-2.5 rounded-lg">
@@ -1598,7 +1569,6 @@
           {/* ACTIVE TRACKER TAB */}
           {activeTab === "tracker" && (
             <main className="max-w-7xl mx-auto space-y-4">
-              {/* Remove Line Mode Instruction Banner */}
               {isRemoveMode && (
                 <div className="w-full bg-red-500/15 border border-red-500/50 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg">
                   <div className="flex items-center gap-3">
@@ -1617,7 +1587,6 @@
                 </div>
               )}
 
-              {/* Full-Width Stretching Notification Banner */}
               {notificationText && (
                 <div className="w-full bg-gradient-to-r from-amber-500/20 via-amber-500/10 to-amber-500/20 border border-amber-500/40 rounded-xl p-4 flex items-center justify-between gap-3 shadow-lg">
                   <div className="flex items-center gap-3">
@@ -1632,14 +1601,12 @@
                     <button
                       onClick={openNotificationEditor}
                       className="text-amber-300 hover:text-white bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/30 px-2.5 py-1 rounded-md text-xs font-semibold transition"
-                      title="Edit active notification message"
                     >
                       ✏️ Edit
                     </button>
                     <button
                       onClick={handleClearNotification}
                       className="text-red-400 hover:text-white bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 px-2.5 py-1 rounded-md text-xs font-semibold transition"
-                      title="Remove notification banner for everyone"
                     >
                       ✕ Remove
                     </button>
@@ -1653,7 +1620,6 @@
                   <table className="w-full text-left border-collapse">
                     <thead>
                       <tr className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-700">
-                        {/* Compact Service Filter Dropdown Built Right into the # Column Header */}
                         <th className="py-3.5 px-4 w-28 text-center rounded-tl-xl relative" ref={filterDropdownRef}>
                           <div className="flex items-center justify-center gap-1.5">
                             <span>#</span>
@@ -1673,7 +1639,6 @@
                             </button>
                           </div>
 
-                          {/* Filter Popover Menu */}
                           {showFilterDropdown && (
                             <div className="absolute left-0 top-14 mt-1 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-3 space-y-3 text-left">
                               <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs">
@@ -1749,6 +1714,7 @@
                         const isHoverTarget = dragOverIndex === index;
                         const status = evaluateRowGridStatus(row, dedicatedGrids);
                         const showWarning = status?.hasConflict && !row.overridden;
+                        const isActionMenuOpen = openActionRowId === row.id;
 
                         return (
                           <tr
@@ -1769,6 +1735,8 @@
                                 ? "opacity-40 bg-blue-900/30 border-2 border-dashed border-blue-500"
                                 : isHoverTarget
                                 ? "bg-blue-600/20 border-t-2 border-blue-400"
+                                : row.trainBlocked
+                                ? "bg-amber-500/10 hover:bg-amber-500/15"
                                 : "hover:bg-slate-700/30"
                             }`}
                           >
@@ -1809,12 +1777,11 @@
                                   onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
                                   onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
                                   className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
-                                    showWarning ? "border-amber-500/80" : "border-slate-700"
+                                    showWarning || row.trainBlocked ? "border-amber-500/80" : "border-slate-700"
                                   } ${isRemoveMode ? "pointer-events-none" : ""}`}
                                 />
                               </div>
 
-                              {/* Slot Breakdown Pill + Override Controls */}
                               {status && (
                                 <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
                                   {status.slotInfo && status.slotInfo.baySize !== "INACTIVE" && (
@@ -1832,20 +1799,22 @@
                                       <span className="text-[11px] text-amber-400 font-medium">
                                         ⚠️ {status.issues.join(" • ")}
                                       </span>
-                                      <button
-                                        type="button"
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          handleOverrideRow(row.id);
-                                        }}
-                                        className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-200 border border-amber-500/40 transition"
-                                      >
-                                        Override
-                                      </button>
+                                      {!row.trainBlocked && (
+                                        <button
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleOverrideRow(row.id);
+                                          }}
+                                          className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-200 border border-amber-500/40 transition"
+                                        >
+                                          Override
+                                        </button>
+                                      )}
                                     </div>
                                   )}
 
-                                  {status.hasConflict && row.overridden && (
+                                  {status.hasConflict && row.overridden && !row.trainBlocked && (
                                     <span className="text-[11px] text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded font-medium">
                                       ✓ Overridden
                                     </span>
@@ -1866,19 +1835,62 @@
                               />
                             </td>
                             <td className="py-3 px-4 align-top pt-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
-                            <td className="py-3 px-4 align-top pt-3.5 text-right">
+                            
+                            {/* ACTION COLUMN WITH DROPDOWN (BLOCK/UNBLOCK & CLEAR) */}
+                            <td className="py-3 px-4 align-top pt-3.5 text-right relative" ref={actionMenuRef}>
                               {isRemoveMode ? (
                                 <span className="inline-block text-red-300 group-hover:text-white bg-red-600/30 group-hover:bg-red-600 border border-red-500/50 text-xs font-semibold px-2.5 py-1.5 rounded-md transition">
                                   Select to Remove
                                 </span>
                               ) : (
-                                <button
-                                  onClick={() => clearRow(row.id)}
-                                  disabled={!row.service && !row.size && !row.grid && !row.pPark}
-                                  className="text-red-400 text-xs px-2.5 py-1.5 bg-red-500/10 hover:bg-red-500/20 rounded-md disabled:opacity-30 transition"
-                                >
-                                  Clear
-                                </button>
+                                <div className="inline-flex items-center gap-1.5">
+                                  {/* Quick Status Tag if Blocked */}
+                                  {row.trainBlocked && (
+                                    <span className="hidden xl:inline-block text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-1 rounded">
+                                      🛑 Blocked
+                                    </span>
+                                  )}
+
+                                  <div className="relative">
+                                    <button
+                                      type="button"
+                                      onClick={() => setOpenActionRowId(isActionMenuOpen ? null : row.id)}
+                                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition ${
+                                        row.trainBlocked
+                                          ? "bg-amber-500/20 border-amber-500/60 text-amber-300"
+                                          : "bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300"
+                                      }`}
+                                    >
+                                      <span>⚙️ Actions</span>
+                                      <span className="text-[9px]">▼</span>
+                                    </button>
+
+                                    {isActionMenuOpen && (
+                                      <div className="absolute right-0 top-10 mt-1 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-1.5 space-y-1 text-left">
+                                        <button
+                                          type="button"
+                                          onClick={() => handleToggleTrainBlock(row.id)}
+                                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition ${
+                                            row.trainBlocked
+                                              ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30"
+                                              : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30"
+                                          }`}
+                                        >
+                                          <span>{row.trainBlocked ? "✅ Unblock Grid" : "🛑 Block Grid for Train"}</span>
+                                        </button>
+
+                                        <button
+                                          type="button"
+                                          onClick={() => clearRow(row.id)}
+                                          disabled={!row.service && !row.size && !row.grid && !row.pPark}
+                                          className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-30 flex items-center gap-2 transition"
+                                        >
+                                          <span>🗑️ Clear Line</span>
+                                        </button>
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
                               )}
                             </td>
                           </tr>
