@@ -59,7 +59,7 @@
       { id: 4, grid: "X41", service: "120", size: "40ft" }
     ];
 
-    // Bay Size & Slot Definitions (X37 & X42 = 20ft; X38-X41 = 40ft)
+    // Bay Size & Slot Definitions
     const GRIDS_20FT = new Set([
       "X1", "X7", "X12", "X13", "X18", "X19", "X24", "X25", "X30",
       "X31", "X36", "X37", "X42"
@@ -79,44 +79,15 @@
 
     // 7 Vertical Blocks matching spreadsheet map
     const YARD_MAP_BLOCKS = [
-      {
-        title: "X1–X6",
-        letters: ["A", "B", "C", "D"],
-        grids: ["X1", "X2", "X3", "X4", "X5", "X6"]
-      },
-      {
-        title: "X7–X12",
-        letters: ["A", "B", "C", "D"],
-        grids: ["X7", "X8", "X9", "X10", "X11", "X12"]
-      },
-      {
-        title: "X13–X18",
-        letters: ["A", "B", "C", "D"],
-        grids: ["X13", "X14", "X15", "X16", "X17", "X18"]
-      },
-      {
-        title: "X19–X24",
-        letters: ["A", "B", "C", "D"],
-        grids: ["X19", "X20", "X21", "X22", "X23", "X24"]
-      },
-      {
-        title: "X25–X30",
-        letters: ["A", "B", "C", "D"],
-        grids: ["X25", "X26", "X27", "X28", "X29", "X30"]
-      },
-      {
-        title: "X31–X36",
-        letters: ["A", "B", "C", "D", "E", "F", "G", "H", "I"],
-        grids: ["X31", "X32", "X33", "X34", "X35", "X36"]
-      },
-      {
-        title: "X37–X42",
-        letters: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-        grids: ["X37", "X38", "X39", "X40", "X41", "X42"]
-      }
+      { title: "X1–X6", letters: ["A", "B", "C", "D"], grids: ["X1", "X2", "X3", "X4", "X5", "X6"] },
+      { title: "X7–X12", letters: ["A", "B", "C", "D"], grids: ["X7", "X8", "X9", "X10", "X11", "X12"] },
+      { title: "X13–X18", letters: ["A", "B", "C", "D"], grids: ["X13", "X14", "X15", "X16", "X17", "X18"] },
+      { title: "X19–X24", letters: ["A", "B", "C", "D"], grids: ["X19", "X20", "X21", "X22", "X23", "X24"] },
+      { title: "X25–X30", letters: ["A", "B", "C", "D"], grids: ["X25", "X26", "X27", "X28", "X29", "X30"] },
+      { title: "X31–X36", letters: ["A", "B", "C", "D", "E", "F", "G", "H", "I"], grids: ["X31", "X32", "X33", "X34", "X35", "X36"] },
+      { title: "X37–X42", letters: ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"], grids: ["X37", "X38", "X39", "X40", "X41", "X42"] }
     ];
 
-    // Helper: Get exact slot letters for any X-Grid
     const getGridSlotInfo = (gridStr) => {
       if (!gridStr) return null;
       const g = gridStr.trim().toUpperCase();
@@ -136,12 +107,8 @@
         slots = "A–J";
       }
 
-      if (GRIDS_20FT.has(g)) {
-        return { baySize: "20ft", slots };
-      }
-      if (GRIDS_40FT.has(g)) {
-        return { baySize: "40ft", slots };
-      }
+      if (GRIDS_20FT.has(g)) return { baySize: "20ft", slots };
+      if (GRIDS_40FT.has(g)) return { baySize: "40ft", slots };
       return null;
     };
 
@@ -154,10 +121,10 @@
       lastUpdated: "",
       overridden: false,
       sharedGridOverridden: false,
-      trainBlocked: false
+      trainBlocked: false,
+      tempGrid: "N/A"
     }));
 
-    // Helper: Lookup assigned P-Park for an X-Grid
     const getAssignedPPark = (gridStr, zones) => {
       if (!gridStr) return null;
       const match = gridStr.trim().toUpperCase().match(/^X(\d+)$/);
@@ -167,7 +134,6 @@
       return zone ? zone.pPark : null;
     };
 
-    // Helper: Build dynamic P-Park segments for a vertical block
     const getBlockPParkSegments = (grids, zones) => {
       const segments = [];
       grids.forEach((gCode) => {
@@ -183,10 +149,9 @@
       return segments;
     };
 
-    // Helper: Evaluate Slot Info, Size Mismatch & Dedicated Grid Conflicts
     const evaluateRowGridStatus = (row, dedicatedGrids) => {
-      if (!row.grid) return null;
-      const g = row.grid.trim().toUpperCase();
+      if (!row.grid && !row.trainBlocked) return null;
+      const g = (row.grid || "").trim().toUpperCase();
       const slotInfo = getGridSlotInfo(g);
       const dedicatedRule = dedicatedGrids.find(d => d.grid.trim().toUpperCase() === g);
 
@@ -226,13 +191,9 @@
       };
     };
 
-    // Helper: Convert any date or timestamp string to 4-Digit 24-Hour format
     const formatTo24Hour = (timeStr) => {
       if (!timeStr) return "--";
-
-      if (/^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}$/.test(timeStr)) {
-        return timeStr;
-      }
+      if (/^[A-Za-z]{3}\s+\d{1,2},\s+\d{4}$/.test(timeStr)) return timeStr;
       
       const legacyMatch = timeStr.match(/^([A-Za-z]+\s+\d+),\s+(\d{1,2}):(\d{2})\s*(AM|PM)$/i);
       if (legacyMatch) {
@@ -240,8 +201,7 @@
         let h = parseInt(rawH, 10);
         if (ampm.toUpperCase() === "PM" && h < 12) h += 12;
         if (ampm.toUpperCase() === "AM" && h === 12) h = 0;
-        const hh = String(h).padStart(2, "0");
-        return `${datePart}, ${hh}${min}`;
+        return `${datePart}, ${String(h).padStart(2, "0")}${min}`;
       }
 
       const parsedDate = new Date(timeStr);
@@ -270,8 +230,7 @@
       return size ? `${svcText} (${size})` : svcText;
     };
 
-    // Reusable Clean Artistic X Grid Map Component
-    function XGridMapBoard({ selectedGrid, onClose, gridZones }) {
+    function XGridMapBoard({ onClose, gridZones }) {
       return (
         <div className="bg-slate-950/95 backdrop-blur-md border border-slate-700/90 rounded-2xl shadow-2xl p-4 w-full overflow-x-auto">
           <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3.5 border-b border-slate-800/90">
@@ -297,15 +256,13 @@
               </span>
             </div>
 
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={onClose}
-                className="text-slate-400 hover:text-white text-xs bg-slate-800/90 hover:bg-slate-700 px-2.5 py-1 rounded-lg border border-slate-700 transition"
-              >
-                ✕ Close
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={onClose}
+              className="text-slate-400 hover:text-white text-xs bg-slate-800/90 hover:bg-slate-700 px-2.5 py-1 rounded-lg border border-slate-700 transition"
+            >
+              ✕ Close
+            </button>
           </div>
 
           <div className="flex items-stretch justify-between gap-3.5 pb-1 min-w-max">
@@ -313,19 +270,13 @@
               const pParkSegments = getBlockPParkSegments(block.grids, gridZones);
 
               return (
-                <div
-                  key={block.title}
-                  className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 shadow-inner flex flex-col justify-between"
-                >
+                <div key={block.title} className="bg-slate-900/80 border border-slate-800 rounded-xl p-2 shadow-inner flex flex-col justify-between">
                   <div>
                     <div className="flex items-center mb-1.5">
                       <div className="w-9 shrink-0"></div>
                       <div className="flex gap-1">
                         {block.letters.map((letter) => (
-                          <div
-                            key={letter}
-                            className="w-4 text-center text-[10px] font-bold text-slate-400 tracking-wide"
-                          >
+                          <div key={letter} className="w-4 text-center text-[10px] font-bold text-slate-400 tracking-wide">
                             {letter}
                           </div>
                         ))}
@@ -338,41 +289,24 @@
                         const isInactive = GRIDS_INACTIVE.has(gCode);
 
                         return (
-                          <div
-                            key={gCode}
-                            className="w-full flex items-center rounded-md px-1 py-0.5 hover:bg-slate-800/40"
-                            title={
-                              isInactive
-                                ? `${gCode} — Inactive`
-                                : `${gCode} (${is20 ? "20ft Bay" : "40ft Bay"})`
-                            }
-                          >
+                          <div key={gCode} className="w-full flex items-center rounded-md px-1 py-0.5 hover:bg-slate-800/40">
                             <span className="w-8 shrink-0 text-left text-[11px] font-bold font-mono text-slate-300">
                               {gCode}
                             </span>
 
                             {isInactive ? (
-                              <div
-                                style={{ width: `${block.letters.length * 20 - 4}px` }}
-                                className="h-4 bg-slate-950 border border-slate-800/90 rounded-[3px]"
-                              />
+                              <div style={{ width: `${block.letters.length * 20 - 4}px` }} className="h-4 bg-slate-950 border border-slate-800/90 rounded-[3px]" />
                             ) : (
                               <div className="flex gap-1">
                                 {block.letters.map((letter) => {
                                   const isBlockedSlotA = (gCode === "X4" || gCode === "X5") && letter === "A";
                                   if (isBlockedSlotA) {
-                                    return (
-                                      <div
-                                        key={letter}
-                                        className="w-4 h-4 bg-white/95 border border-slate-400 rounded-[3px] shadow-sm"
-                                      />
-                                    );
+                                    return <div key={letter} className="w-4 h-4 bg-white/95 border border-slate-400 rounded-[3px] shadow-sm" />;
                                   }
-
                                   return (
                                     <div
                                       key={letter}
-                                      className={`w-4 h-4 rounded-[3px] border shadow-sm transition-transform ${
+                                      className={`w-4 h-4 rounded-[3px] border shadow-sm ${
                                         is20
                                           ? "bg-gradient-to-b from-amber-300 to-amber-400 border-amber-500/80"
                                           : "bg-gradient-to-b from-emerald-400 to-emerald-500 border-emerald-300/70"
@@ -389,21 +323,15 @@
                   </div>
 
                   <div className="mt-2.5 pt-1.5 border-t border-slate-800/90 flex items-center gap-1">
-                    {pParkSegments.map((seg, idx) => {
-                      const rangeLabel = pParkSegments.length > 1
-                        ? (seg.startNum === seg.endNum ? ` (X${seg.startNum})` : ` (X${seg.startNum}–${seg.endNum})`)
-                        : "";
-                      return (
-                        <div
-                          key={`${seg.pPark}-${idx}`}
-                          style={{ flexGrow: seg.endNum - seg.startNum + 1 }}
-                          className="text-center text-[10px] font-bold tracking-wide px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 truncate"
-                          title={`Assigned Zone: ${seg.pPark}${rangeLabel}`}
-                        >
-                          {seg.pPark}{rangeLabel}
-                        </div>
-                      );
-                    })}
+                    {pParkSegments.map((seg, idx) => (
+                      <div
+                        key={`${seg.pPark}-${idx}`}
+                        style={{ flexGrow: seg.endNum - seg.startNum + 1 }}
+                        className="text-center text-[10px] font-bold tracking-wide px-1.5 py-0.5 rounded-md bg-purple-500/15 text-purple-300 border border-purple-500/30 truncate"
+                      >
+                        {seg.pPark}
+                      </div>
+                    ))}
                   </div>
                 </div>
               );
@@ -422,38 +350,30 @@
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
-      // Active Service Filters
       const [selectedServiceFilters, setSelectedServiceFilters] = useState([]);
       const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-
-      // Header X Grid Map Reference Panel Toggle
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
-
-      // Active Row Action Menu Open ID
       const [openActionRowId, setOpenActionRowId] = useState(null);
 
-      // Remove Line Selection & Confirmation State
+      // Train Block Modal State
+      const [trainBlockModalRow, setTrainBlockModalRow] = useState(null);
+      const [tempGridInput, setTempGridInput] = useState("N/A");
+
       const [isRemoveMode, setIsRemoveMode] = useState(false);
       const [rowPendingRemoval, setRowPendingRemoval] = useState(null);
-
-      // Shared Grid Conflict Modal State
       const [sharedGridConflict, setSharedGridConflict] = useState(null);
       const committedRowsSnapshotRef = useRef(INITIAL_ROWS);
 
-      // Notification State
       const [notificationText, setNotificationText] = useState("");
       const [showNotificationEditor, setShowNotificationEditor] = useState(false);
       const [notificationInput, setNotificationInput] = useState("");
 
-      // Export State
       const [showExportDrawer, setShowExportDrawer] = useState(false);
       const [selectedServicesForExport, setSelectedServicesForExport] = useState([]);
 
-      // Drag and drop state
       const [draggedIndex, setDraggedIndex] = useState(null);
       const [dragOverIndex, setDragOverIndex] = useState(null);
 
-      // Controls Dropdown & Drawers
       const [showControlsMenu, setShowControlsMenu] = useState(false);
       const [showManageServices, setShowManageServices] = useState(false);
       const [showManageZones, setShowManageZones] = useState(false);
@@ -462,7 +382,6 @@
       const [editingServiceIndex, setEditingServiceIndex] = useState(null);
       const [editServiceInput, setEditServiceInput] = useState("");
 
-      // Movement Log Search State
       const [logSearchQuery, setLogSearchQuery] = useState("");
 
       const dropdownRef = useRef(null);
@@ -471,21 +390,14 @@
 
       useEffect(() => {
         const handleClickOutside = (event) => {
-          if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
-            setShowControlsMenu(false);
-          }
-          if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) {
-            setShowFilterDropdown(false);
-          }
-          if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) {
-            setOpenActionRowId(null);
-          }
+          if (dropdownRef.current && !dropdownRef.current.contains(event.target)) setShowControlsMenu(false);
+          if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) setShowFilterDropdown(false);
+          if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) setOpenActionRowId(null);
         };
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
       }, []);
 
-      // Live Sync with Firebase
       useEffect(() => {
         if (!FIREBASE_DB_URL) return;
         const db = firebase.database();
@@ -526,8 +438,7 @@
 
         const notificationRef = db.ref("yard_notification");
         notificationRef.on("value", (snapshot) => {
-          const val = snapshot.val();
-          setNotificationText(val || "");
+          setNotificationText(snapshot.val() || "");
         });
 
         return () => {
@@ -695,26 +606,33 @@
         setRows([...committedRowsSnapshotRef.current]);
       };
 
-      const handleOverrideRow = (id) => {
-        const updatedRows = rows.map(row => row.id === id ? { ...row, overridden: true } : row);
-        saveRowsToFirebase(updatedRows);
+      // Click action for Train Block: Opens modal if unblocking or blocking
+      const handleOpenTrainBlockModal = (row) => {
+        setOpenActionRowId(null);
+        if (row.trainBlocked) {
+          // If already blocked, clicking unblocks immediately
+          executeToggleTrainBlock(row.id, false, "N/A");
+        } else {
+          // Open modal to configure temp alternate grid
+          setTrainBlockModalRow(row);
+          setTempGridInput("N/A");
+        }
       };
 
-      // Manual Train Block Toggle Handler
-      const handleToggleTrainBlock = (id) => {
+      const executeToggleTrainBlock = (id, blockState, tempGridVal) => {
         const now = getCurrent24HourTimestamp();
         const targetRow = rows.find(r => r.id === id);
         if (!targetRow) return;
 
-        const nextBlockedState = !targetRow.trainBlocked;
         const updatedRows = rows.map(row => row.id === id ? {
           ...row,
-          trainBlocked: nextBlockedState,
+          trainBlocked: blockState,
+          tempGrid: blockState ? (tempGridVal || "N/A") : "N/A",
           lastUpdated: now
         } : row);
 
         saveRowsToFirebase(updatedRows);
-        setOpenActionRowId(null);
+        setTrainBlockModalRow(null);
 
         const logEntry = {
           id: Date.now(),
@@ -722,9 +640,9 @@
           service: targetRow.service,
           size: targetRow.size,
           grid: targetRow.grid,
-          action: nextBlockedState 
-            ? `Blocked Line ${id} Grid (${targetRow.grid || "Unassigned"}) for Train Load-Out`
-            : `Unblocked Line ${id} Grid (${targetRow.grid || "Unassigned"})`
+          action: blockState 
+            ? `Blocked Line ${id} Grid for train (Temp: ${tempGridVal || "N/A"})`
+            : `Unblocked Line ${id} Grid`
         };
         firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
       };
@@ -743,7 +661,8 @@
           lastUpdated: now,
           overridden: false,
           sharedGridOverridden: false,
-          trainBlocked: false
+          trainBlocked: false,
+          tempGrid: "N/A"
         } : row);
         
         const logEntry = {
@@ -1002,7 +921,8 @@
           lastUpdated: "",
           overridden: false,
           sharedGridOverridden: false,
-          trainBlocked: false
+          trainBlocked: false,
+          tempGrid: "N/A"
         };
         saveRowsToFirebase([...rows, newRow]);
         setShowControlsMenu(false);
@@ -1060,6 +980,54 @@
           <datalist id="p-park-list">
             {P_PARK_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
+
+          {/* Train Block Configuration Modal */}
+          {trainBlockModalRow && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-800 border border-amber-500/60 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center gap-2.5 text-amber-400">
+                  <span className="text-xl">🛑</span>
+                  <h3 className="text-lg font-bold text-white">Block Grid for Train Load-Out</h3>
+                </div>
+
+                <div className="space-y-3 text-sm text-slate-300">
+                  <p>
+                    Line <strong className="text-white">#{trainBlockModalRow.id}</strong> (Grid <strong className="text-emerald-400 font-mono">{trainBlockModalRow.grid || "Unassigned"}</strong>) will be restricted.
+                  </p>
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
+                      Temporary Alternate Grid (Optional):
+                    </label>
+                    <input
+                      type="text"
+                      value={tempGridInput}
+                      onChange={(e) => setTempGridInput(e.target.value.toUpperCase())}
+                      placeholder="e.g. TF3, T1, or N/A"
+                      className="w-full bg-slate-900 border border-slate-700 text-white font-mono font-semibold rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                    />
+                    <p className="text-[11px] text-slate-500 mt-1">Leave as "N/A" if no temporary alternate spot is required right now.</p>
+                  </div>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setTrainBlockModalRow(null)}
+                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => executeToggleTrainBlock(trainBlockModalRow.id, true, tempGridInput.trim() || "N/A")}
+                    className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold shadow-lg transition"
+                  >
+                    Confirm Block
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Sticky Maximized X Grid Map Reference Panel */}
           {showHeaderGridMap && (
@@ -1747,9 +1715,9 @@
                             <td className="py-3 px-4 align-top">
                               <select
                                 value={row.service}
-                                disabled={isRemoveMode}
+                                disabled={isRemoveMode || row.trainBlocked}
                                 onChange={(e) => handleCommitRowChange(row.id, "service", e.target.value)}
-                                className={`w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${isRemoveMode ? "pointer-events-none" : ""}`}
+                                className={`w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${isRemoveMode || row.trainBlocked ? "pointer-events-none opacity-60" : ""}`}
                               >
                                 <option value="">-- Select --</option>
                                 {services.map((svc) => <option key={svc} value={svc}>{svc}</option>)}
@@ -1758,9 +1726,9 @@
                             <td className="py-3 px-4 align-top">
                               <select
                                 value={row.size}
-                                disabled={isRemoveMode}
+                                disabled={isRemoveMode || row.trainBlocked}
                                 onChange={(e) => handleCommitRowChange(row.id, "size", e.target.value)}
-                                className={`w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${isRemoveMode ? "pointer-events-none" : ""}`}
+                                className={`w-full bg-slate-900 border border-slate-700 text-slate-200 text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${isRemoveMode || row.trainBlocked ? "pointer-events-none opacity-60" : ""}`}
                               >
                                 <option value="">-- Select --</option>
                                 {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
@@ -1771,21 +1739,33 @@
                                 <input
                                   type="text"
                                   data-grid-input="true"
-                                  disabled={isRemoveMode}
-                                  placeholder="Type Grid (e.g. X1, TF1, T1)"
+                                  disabled={isRemoveMode || row.trainBlocked}
+                                  placeholder="Type Grid (e.g. X1, TF1)"
                                   value={row.grid}
                                   onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
                                   onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
                                   className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
                                     showWarning || row.trainBlocked ? "border-amber-500/80" : "border-slate-700"
-                                  } ${isRemoveMode ? "pointer-events-none" : ""}`}
+                                  } ${isRemoveMode || row.trainBlocked ? "pointer-events-none opacity-75" : ""}`}
                                 />
                               </div>
 
+                              {/* Slot Info & Train Block Warning Badge */}
                               {status && (
-                                <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                                  {status.slotInfo && status.slotInfo.baySize !== "INACTIVE" && (
-                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border ${
+                                <div className="mt-1.5 flex flex-col gap-1">
+                                  {row.trainBlocked && (
+                                    <div className="flex flex-col gap-0.5 bg-amber-500/15 border border-amber-500/40 rounded px-2 py-1">
+                                      <span className="text-[11px] font-bold text-amber-300">
+                                        🛑 Grid blocked for train load-out
+                                      </span>
+                                      <span className="text-[10px] font-mono text-amber-200/90">
+                                        🔄 Temp Grid: <strong className="text-white">{row.tempGrid || "N/A"}</strong>
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {status.slotInfo && status.slotInfo.baySize !== "INACTIVE" && !row.trainBlocked && (
+                                    <span className={`inline-flex items-center px-2 py-0.5 rounded text-[11px] font-semibold border w-max ${
                                       status.slotInfo.baySize === "20ft"
                                         ? "bg-amber-500/15 text-amber-300 border-amber-500/30"
                                         : "bg-emerald-500/15 text-emerald-300 border-emerald-500/30"
@@ -1794,30 +1774,22 @@
                                     </span>
                                   )}
 
-                                  {showWarning && (
+                                  {showWarning && !row.trainBlocked && (
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       <span className="text-[11px] text-amber-400 font-medium">
                                         ⚠️ {status.issues.join(" • ")}
                                       </span>
-                                      {!row.trainBlocked && (
-                                        <button
-                                          type="button"
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            handleOverrideRow(row.id);
-                                          }}
-                                          className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-200 border border-amber-500/40 transition"
-                                        >
-                                          Override
-                                        </button>
-                                      )}
+                                      <button
+                                        type="button"
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleOverrideRow(row.id);
+                                        }}
+                                        className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 hover:bg-amber-500/40 text-amber-200 border border-amber-500/40 transition"
+                                      >
+                                        Override
+                                      </button>
                                     </div>
-                                  )}
-
-                                  {status.hasConflict && row.overridden && !row.trainBlocked && (
-                                    <span className="text-[11px] text-slate-400 bg-slate-800 border border-slate-700 px-2 py-0.5 rounded font-medium">
-                                      ✓ Overridden
-                                    </span>
                                   )}
                                 </div>
                               )}
@@ -1836,7 +1808,7 @@
                             </td>
                             <td className="py-3 px-4 align-top pt-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
                             
-                            {/* ACTION COLUMN WITH DROPDOWN (BLOCK/UNBLOCK & CLEAR) */}
+                            {/* ACTION COLUMN */}
                             <td className="py-3 px-4 align-top pt-3.5 text-right relative" ref={actionMenuRef}>
                               {isRemoveMode ? (
                                 <span className="inline-block text-red-300 group-hover:text-white bg-red-600/30 group-hover:bg-red-600 border border-red-500/50 text-xs font-semibold px-2.5 py-1.5 rounded-md transition">
@@ -1844,7 +1816,6 @@
                                 </span>
                               ) : (
                                 <div className="inline-flex items-center gap-1.5">
-                                  {/* Quick Status Tag if Blocked */}
                                   {row.trainBlocked && (
                                     <span className="hidden xl:inline-block text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-1 rounded">
                                       🛑 Blocked
@@ -1869,7 +1840,7 @@
                                       <div className="absolute right-0 top-10 mt-1 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-1.5 space-y-1 text-left">
                                         <button
                                           type="button"
-                                          onClick={() => handleToggleTrainBlock(row.id)}
+                                          onClick={() => handleOpenTrainBlockModal(row)}
                                           className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition ${
                                             row.trainBlocked
                                               ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30"
