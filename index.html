@@ -478,8 +478,9 @@
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
-      // Active Service Filters (Empty array or containing all services means showing all)
+      // Active Service Filters
       const [selectedServiceFilters, setSelectedServiceFilters] = useState([]);
+      const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
       // Header X Grid Map Reference Panel Toggle
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
@@ -522,11 +523,15 @@
 
       const dropdownRef = useRef(null);
       const gridPickerRef = useRef(null);
+      const filterDropdownRef = useRef(null);
 
       useEffect(() => {
         const handleClickOutside = (event) => {
           if (dropdownRef.current && !dropdownRef.current.contains(event.target)) {
             setShowControlsMenu(false);
+          }
+          if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) {
+            setShowFilterDropdown(false);
           }
           if (gridPickerRef.current && !gridPickerRef.current.contains(event.target)) {
             if (!event.target.dataset || !event.target.dataset.gridInput) {
@@ -970,6 +975,10 @@
 
       const clearServiceFilters = () => {
         setSelectedServiceFilters([]);
+      };
+
+      const selectAllServiceFilters = () => {
+        setSelectedServiceFilters([...services]);
       };
 
       // Drag and Drop Logic
@@ -1661,54 +1670,85 @@
                     <thead>
                       <tr className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-700">
                         <th className="py-3.5 px-4 w-16 text-center rounded-tl-xl">#</th>
-                        {/* Service Filter Column In-Between # and Service */}
-                        <th className="py-3.5 px-4 min-w-[220px]">
-                          <div className="flex flex-col gap-1.5">
-                            <div className="flex items-center justify-between">
-                              <span className="text-slate-300 font-bold text-[11px] tracking-wide flex items-center gap-1">
-                                <span>🔍</span> Filter Services:
+                        {/* Compact Service Filter Dropdown In-Between # and Service */}
+                        <th className="py-3.5 px-4 relative" ref={filterDropdownRef}>
+                          <div className="flex items-center">
+                            <button
+                              type="button"
+                              onClick={() => setShowFilterDropdown(!showFilterDropdown)}
+                              className={`px-3 py-1.5 rounded-lg border text-xs font-semibold flex items-center gap-2 transition ${
+                                selectedServiceFilters.length > 0
+                                  ? "bg-blue-600/20 border-blue-500/60 text-blue-300"
+                                  : "bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300"
+                              }`}
+                            >
+                              <span>🔍</span>
+                              <span>
+                                {selectedServiceFilters.length === 0
+                                  ? "Filter Services"
+                                  : `Filter Services (${selectedServiceFilters.length})`}
                               </span>
-                              {selectedServiceFilters.length > 0 && (
+                              <span className="text-[10px] text-slate-400">▼</span>
+                            </button>
+                          </div>
+
+                          {/* Filter Popover Menu */}
+                          {showFilterDropdown && (
+                            <div className="absolute left-4 top-14 mt-1 w-64 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-3 space-y-3">
+                              <div className="flex items-center justify-between pb-2 border-b border-slate-800 text-xs">
+                                <span className="font-bold text-white">Filter by Service</span>
+                                <div className="flex items-center gap-2">
+                                  <button
+                                    type="button"
+                                    onClick={selectAllServiceFilters}
+                                    className="text-blue-400 hover:underline font-normal"
+                                  >
+                                    All
+                                  </button>
+                                  <span className="text-slate-600">|</span>
+                                  <button
+                                    type="button"
+                                    onClick={clearServiceFilters}
+                                    className="text-slate-400 hover:underline font-normal"
+                                  >
+                                    Clear
+                                  </button>
+                                </div>
+                              </div>
+
+                              <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                {services.map((svc) => {
+                                  const isChecked = selectedServiceFilters.includes(svc);
+                                  return (
+                                    <label
+                                      key={svc}
+                                      className={`flex items-center gap-2.5 px-2.5 py-1.5 rounded-lg text-xs cursor-pointer transition ${
+                                        isChecked ? "bg-blue-600/20 text-blue-300 font-semibold" : "hover:bg-slate-800 text-slate-300"
+                                      }`}
+                                    >
+                                      <input
+                                        type="checkbox"
+                                        checked={isChecked}
+                                        onChange={() => toggleServiceFilter(svc)}
+                                        className="rounded accent-blue-500"
+                                      />
+                                      <span className="font-mono font-bold">Service {svc}</span>
+                                    </label>
+                                  );
+                                })}
+                              </div>
+
+                              <div className="pt-2 border-t border-slate-800 flex justify-end">
                                 <button
                                   type="button"
-                                  onClick={clearServiceFilters}
-                                  className="text-[10px] text-blue-400 hover:underline lowercase font-normal"
+                                  onClick={() => setShowFilterDropdown(false)}
+                                  className="px-3 py-1 bg-blue-600 hover:bg-blue-500 text-white rounded-md text-xs font-semibold"
                                 >
-                                  clear ({selectedServiceFilters.length})
+                                  Done
                                 </button>
-                              )}
+                              </div>
                             </div>
-                            <div className="flex flex-wrap items-center gap-1">
-                              <button
-                                type="button"
-                                onClick={clearServiceFilters}
-                                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
-                                  selectedServiceFilters.length === 0
-                                    ? "bg-blue-600 text-white shadow-sm"
-                                    : "bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800"
-                                }`}
-                              >
-                                All
-                              </button>
-                              {services.map((svc) => {
-                                const isSelected = selectedServiceFilters.includes(svc);
-                                return (
-                                  <button
-                                    key={svc}
-                                    type="button"
-                                    onClick={() => toggleServiceFilter(svc)}
-                                    className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono transition ${
-                                      isSelected
-                                        ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-400"
-                                        : "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800"
-                                    }`}
-                                  >
-                                    {svc}
-                                  </button>
-                                );
-                              })}
-                            </div>
-                          </div>
+                          )}
                         </th>
                         <th className="py-3.5 px-4">Service</th>
                         <th className="py-3.5 px-4">Size</th>
