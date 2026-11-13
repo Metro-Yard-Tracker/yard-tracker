@@ -276,7 +276,7 @@
           <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3.5 border-b border-slate-800/90">
             <div className="flex flex-wrap items-center gap-4 text-xs">
               <span className="font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
-                <span className="text-blue-400">🗺️</span> X Grid Map
+                <span className="text-blue-400">🗺️</span> X Grid Map Reference
               </span>
               <span className="inline-flex items-center gap-1.5 text-amber-300 font-medium">
                 <span className="w-3.5 h-3.5 rounded-[3px] bg-gradient-to-b from-amber-300 to-amber-400 border border-amber-500/80 shadow-sm inline-block"></span>
@@ -485,9 +485,6 @@
       // Header X Grid Map Reference Panel Toggle
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
 
-      // Active Row Visual Grid Picker ID
-      const [openGridPickerRowId, setOpenGridPickerRowId] = useState(null);
-
       // Remove Line Selection & Confirmation State
       const [isRemoveMode, setIsRemoveMode] = useState(false);
       const [rowPendingRemoval, setRowPendingRemoval] = useState(null);
@@ -522,7 +519,6 @@
       const [logSearchQuery, setLogSearchQuery] = useState("");
 
       const dropdownRef = useRef(null);
-      const gridPickerRef = useRef(null);
       const filterDropdownRef = useRef(null);
 
       useEffect(() => {
@@ -532,11 +528,6 @@
           }
           if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) {
             setShowFilterDropdown(false);
-          }
-          if (gridPickerRef.current && !gridPickerRef.current.contains(event.target)) {
-            if (!event.target.dataset || !event.target.dataset.gridInput) {
-              setOpenGridPickerRowId(null);
-            }
           }
         };
         document.addEventListener("mousedown", handleClickOutside);
@@ -755,12 +746,6 @@
         setRows([...committedRowsSnapshotRef.current]);
       };
 
-      // Handle clicking a grid tile inside the Row X Grid Map Dropdown
-      const handleSelectGridFromMap = (rowId, gridCode) => {
-        setOpenGridPickerRowId(null);
-        handleCommitRowChange(rowId, "grid", gridCode);
-      };
-
       const handleOverrideRow = (id) => {
         const updatedRows = rows.map(row => row.id === id ? { ...row, overridden: true } : row);
         saveRowsToFirebase(updatedRows);
@@ -799,7 +784,6 @@
       const startRemoveLineMode = () => {
         if (rows.length <= 1) return;
         closeAllDrawers();
-        setOpenGridPickerRowId(null);
         setActiveTab("tracker");
         setIsRemoveMode(true);
         setRowPendingRemoval(null);
@@ -1105,6 +1089,17 @@
             {P_PARK_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
 
+          {/* Sticky Maximized X Grid Map Reference Panel */}
+          {showHeaderGridMap && (
+            <div className="sticky top-4 z-40 max-w-7xl mx-auto mb-6 shadow-2xl transition-all">
+              <XGridMapBoard
+                interactive={false}
+                gridZones={gridZones}
+                onClose={() => setShowHeaderGridMap(false)}
+              />
+            </div>
+          )}
+
           {/* Shared Grid / Different Service Conflict Pop-Up Modal */}
           {sharedGridConflict && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1317,17 +1312,6 @@
               </div>
             </div>
           </header>
-
-          {/* Header X Grid Map Dropdown Panel */}
-          {showHeaderGridMap && (
-            <div className="max-w-7xl mx-auto mb-6">
-              <XGridMapBoard
-                interactive={false}
-                gridZones={gridZones}
-                onClose={() => setShowHeaderGridMap(false)}
-              />
-            </div>
-          )}
 
           {/* Manage Dedicated Service Grids Drawer */}
           {showManageDedicated && (
@@ -1654,7 +1638,7 @@
                     </button>
                     <button
                       onClick={handleClearNotification}
-                      className="text-red-400 hover:text-white bg-red-500/20 bg-red-500/30 border border-red-500/30 px-2.5 py-1 rounded-md text-xs font-semibold transition"
+                      className="text-red-400 hover:text-white bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 px-2.5 py-1 rounded-md text-xs font-semibold transition"
                       title="Remove notification banner for everyone"
                     >
                       ✕ Remove
@@ -1765,7 +1749,6 @@
                         const isHoverTarget = dragOverIndex === index;
                         const status = evaluateRowGridStatus(row, dedicatedGrids);
                         const showWarning = status?.hasConflict && !row.overridden;
-                        const isPickerOpen = openGridPickerRowId === row.id;
 
                         return (
                           <tr
@@ -1821,49 +1804,15 @@
                                   type="text"
                                   data-grid-input="true"
                                   disabled={isRemoveMode}
-                                  placeholder="Select or Type (X1, TF1, T1)"
+                                  placeholder="Type Grid (e.g. X1, TF1, T1)"
                                   value={row.grid}
-                                  onFocus={() => !isRemoveMode && setOpenGridPickerRowId(row.id)}
-                                  onClick={() => !isRemoveMode && setOpenGridPickerRowId(row.id)}
                                   onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
                                   onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
-                                  onKeyDown={(e) => {
-                                    if (e.key === "Enter" || e.key === "Escape") {
-                                      setOpenGridPickerRowId(null);
-                                    }
-                                  }}
-                                  className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 pr-8 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                                  className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
                                     showWarning ? "border-amber-500/80" : "border-slate-700"
                                   } ${isRemoveMode ? "pointer-events-none" : ""}`}
                                 />
-                                <button
-                                  type="button"
-                                  data-grid-input="true"
-                                  disabled={isRemoveMode}
-                                  onClick={() => setOpenGridPickerRowId(isPickerOpen ? null : row.id)}
-                                  className={`absolute right-2 text-slate-400 hover:text-white text-xs p-1 ${isRemoveMode ? "pointer-events-none" : ""}`}
-                                  title="Toggle X Grid Map Picker"
-                                >
-                                  {isPickerOpen ? "▲" : "▼"}
-                                </button>
                               </div>
-
-                              {/* Interactive X Grid Map Popover */}
-                              {isPickerOpen && !isRemoveMode && (
-                                <div
-                                  ref={gridPickerRef}
-                                  onMouseDown={(e) => e.preventDefault()}
-                                  className="fixed md:absolute left-2 right-2 md:left-[-190px] md:right-auto mt-2 z-50 w-auto md:w-[980px] max-w-[96vw]"
-                                >
-                                  <XGridMapBoard
-                                    interactive={true}
-                                    gridZones={gridZones}
-                                    selectedGrid={row.grid}
-                                    onSelectGrid={(gCode) => handleSelectGridFromMap(row.id, gCode)}
-                                    onClose={() => setOpenGridPickerRowId(null)}
-                                  />
-                                </div>
-                              )}
 
                               {/* Slot Breakdown Pill + Override Controls */}
                               {status && (
