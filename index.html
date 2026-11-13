@@ -41,6 +41,28 @@
     const DEFAULT_SERVICES = ["120", "192", "194", "CMA", "225"];
     const SIZES = ["20ft", "40ft"];
 
+    // Default X-Grid to P-Park Zone Mappings
+    const DEFAULT_GRID_ZONES = [
+      { id: 1, start: 1, end: 12, pPark: "P2" },
+      { id: 2, start: 13, end: 24, pPark: "P3" },
+      { id: 3, start: 25, end: 30, pPark: "P4" },
+      { id: 4, start: 31, end: 42, pPark: "P5" }
+    ];
+
+    // Bay Size Classifications from Yard Map
+    const GRIDS_20FT_ONLY = new Set(["X1", "X12", "X13", "X18", "X19", "X24", "X25", "X30", "X31", "X36"]);
+    const GRIDS_40FT_ONLY = new Set([
+      "X2", "X3", "X4", "X5",
+      "X8", "X9", "X10", "X11",
+      "X14", "X15", "X16", "X17",
+      "X20", "X21", "X22", "X23",
+      "X26", "X27", "X28", "X29",
+      "X32", "X33", "X34", "X35",
+      "X39", "X40"
+    ]);
+    const GRIDS_HYBRID = new Set(["X37", "X38", "X41", "X42"]);
+    const GRIDS_INACTIVE = new Set(["X6"]);
+
     const INITIAL_ROWS = Array.from({ length: 12 }, (_, index) => ({
       id: index + 1,
       service: "",
@@ -49,6 +71,35 @@
       pPark: "",
       lastUpdated: ""
     }));
+
+    // Helper: Lookup assigned P-Park for an X-Grid
+    const getAssignedPPark = (gridStr, zones) => {
+      if (!gridStr) return null;
+      const match = gridStr.trim().toUpperCase().match(/^X(\d+)$/);
+      if (!match) return null;
+      const num = parseInt(match[1], 10);
+      const zone = zones.find(z => num >= Number(z.start) && num <= Number(z.end));
+      return zone ? zone.pPark : null;
+    };
+
+    // Helper: Check size compatibility / bay type warning
+    const getGridWarning = (gridStr, sizeStr) => {
+      if (!gridStr) return null;
+      const g = gridStr.trim().toUpperCase();
+      if (GRIDS_INACTIVE.has(g)) {
+        return { type: "error", text: `${g} is marked inactive on yard map` };
+      }
+      if (GRIDS_HYBRID.has(g)) {
+        return { type: "info", text: "Hybrid Bay (20ft outer / 40ft center)" };
+      }
+      if (sizeStr === "40ft" && GRIDS_20FT_ONLY.has(g)) {
+        return { type: "warn", text: `${g} is a 20ft-only bay` };
+      }
+      if (sizeStr === "20ft" && GRIDS_40FT_ONLY.has(g)) {
+        return { type: "warn", text: `${g} is a 40ft-only bay` };
+      }
+      return null;
+    };
 
     // Helper: Convert any date or timestamp string to 4-Digit 24-Hour format (e.g., "Nov 11, 1300")
     const formatTo24Hour = (timeStr) => {
@@ -93,6 +144,7 @@
       const [activeTab, setActiveTab] = useState("tracker");
       const [rows, setRows] = useState(INITIAL_ROWS);
       const [services, setServices] = useState(DEFAULT_SERVICES);
+      const [gridZones, setGridZones] = useState(DEFAULT_GRID_ZONES);
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
@@ -109,9 +161,10 @@
       const [draggedIndex, setDraggedIndex] = useState(null);
       const [dragOverIndex, setDragOverIndex] = useState(null);
 
-      // Controls Dropdown & Manage Services States
+      // Controls Dropdown, Manage Services & Manage Grid Zones States
       const [showControlsMenu, setShowControlsMenu] = useState(false);
       const [showManageServices, setShowManageServices] = useState(false);
+      const [showManageZones, setShowManageZones] = useState(false);
       const [newServiceInput, setNewServiceInput] = useState("");
       const [editingServiceIndex, setEditingServiceIndex] = useState(null);
       const [editServiceInput, setEditServiceInput] = useState("");
@@ -149,6 +202,12 @@
           if (data) setServices(data);
         });
 
+        const zonesRef = db.ref("yard_grid_zones");
+        zonesRef.on("value", (snapshot) => {
+          const data = snapshot.val();
+          if (data && Array.isArray(data)) setGridZones(data);
+        });
+
         const historyRef = db.ref("yard_history");
         historyRef.on("value", (snapshot) => {
           const data = snapshot.val();
@@ -164,6 +223,7 @@
         return () => {
           rowsRef.off();
           servicesRef.off();
+          zonesRef.off();
           historyRef.off();
           notificationRef.off();
         };
@@ -175,9 +235,25 @@
         firebase.database().ref("yard_rows").set(reindexedRows);
       };
 
+      const saveGridZonesToFirebase = (updatedZones) => {
+        setGridZones(updatedZones);
+        firebase.database().ref("yard_grid_zones").set(updatedZones);
+      };
+
       const handleRowInputChange = (id, field, value) => {
         const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
-        const updatedRows = rows.map(row => row.id === id ? { ...row, [field]: formattedValue } : row);
+        const updatedRows = rows.map(row => {
+          if (row.id !== id) return row;
+          if (field === "grid") {
+            const autoPPark = getAssignedPPark(formattedValue, gridZones);
+            return {
+              ...row,
+              grid: formattedValue,
+              pPark: autoPPark !== null ? autoPPark : row.pPark
+            };
+          }
+          return { ...row, [field]: formattedValue };
+        });
         setRows(updatedRows);
       };
 
@@ -186,10 +262,25 @@
         const now = getCurrent24HourTimestamp();
 
         const currentRow = rows.find(r => r.id === id);
+        let resolvedPPark = currentRow ? currentRow.pPark : "";
+
+        if (field === "grid") {
+          const autoPPark = getAssignedPPark(formattedValue, gridZones);
+          if (autoPPark !== null) {
+            resolvedPPark = autoPPark;
+          }
+        } else if (field === "pPark") {
+          resolvedPPark = formattedValue;
+        }
         
         const updatedRows = rows.map(row => {
           if (row.id === id) {
-            return { ...row, [field]: formattedValue, lastUpdated: now };
+            return {
+              ...row,
+              [field]: formattedValue,
+              pPark: resolvedPPark,
+              lastUpdated: now
+            };
           }
           return row;
         });
@@ -230,12 +321,37 @@
         saveRowsToFirebase(updatedRows);
       };
 
+      // Grid Zones Management Handlers
+      const handleZoneFieldChange = (id, key, val) => {
+        const updated = gridZones.map(z => {
+          if (z.id !== id) return z;
+          if (key === "pPark") return { ...z, pPark: val.toUpperCase() };
+          return { ...z, [key]: val === "" ? "" : Math.max(1, Math.min(42, parseInt(val, 10) || 1)) };
+        });
+        saveGridZonesToFirebase(updated);
+      };
+
+      const handleAddZone = () => {
+        const nextId = gridZones.length > 0 ? Math.max(...gridZones.map(z => z.id)) + 1 : 1;
+        const newZone = { id: nextId, start: 1, end: 1, pPark: "P1" };
+        saveGridZonesToFirebase([...gridZones, newZone]);
+      };
+
+      const handleDeleteZone = (id) => {
+        saveGridZonesToFirebase(gridZones.filter(z => z.id !== id));
+      };
+
+      const handleResetZones = () => {
+        saveGridZonesToFirebase(DEFAULT_GRID_ZONES);
+      };
+
       // Notification Management
       const openNotificationEditor = () => {
         setNotificationInput(notificationText);
         setShowNotificationEditor(true);
         setShowManageServices(false);
         setShowExportDrawer(false);
+        setShowManageZones(false);
       };
 
       const handleSaveNotification = (e) => {
@@ -256,6 +372,7 @@
         setShowExportDrawer(true);
         setShowNotificationEditor(false);
         setShowManageServices(false);
+        setShowManageZones(false);
       };
 
       const toggleExportService = (svc) => {
@@ -277,7 +394,6 @@
           return;
         }
 
-        // Clean export layout with only Service, Size, Grid, and P Park
         const exportData = rowsToExport.map((row) => ({
           "Service": row.service || "",
           "Size": row.size || "",
@@ -286,8 +402,6 @@
         }));
 
         const worksheet = XLSX.utils.json_to_sheet(exportData);
-        
-        // Auto-fit column widths for the remaining 4 columns
         worksheet["!cols"] = [
           { wch: 14 }, // Service
           { wch: 10 }, // Size
@@ -505,7 +619,20 @@
                     </button>
                     <button
                       onClick={() => {
+                        setShowManageZones(!showManageZones);
+                        setShowManageServices(false);
+                        setShowNotificationEditor(false);
+                        setShowExportDrawer(false);
+                        setShowControlsMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-purple-400 hover:bg-slate-700/60 flex items-center gap-2 border-b border-slate-700/50"
+                    >
+                      <span>📍</span> Manage Grid Zones
+                    </button>
+                    <button
+                      onClick={() => {
                         setShowManageServices(!showManageServices);
+                        setShowManageZones(false);
                         setShowNotificationEditor(false);
                         setShowExportDrawer(false);
                         setShowControlsMenu(false);
@@ -519,6 +646,85 @@
               </div>
             </div>
           </header>
+
+          {/* Manage Grid Zones (P-Park Auto-Fill Rules) Drawer */}
+          {showManageZones && (
+            <div className="max-w-6xl mx-auto mb-6 bg-slate-800 border border-purple-500/40 p-5 rounded-xl shadow-xl">
+              <div className="flex justify-between items-center mb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-purple-400 uppercase tracking-wider flex items-center gap-2">
+                    <span>📍</span> Manage X-Grid to P-Park Assignments
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Configure which P Park auto-fills when an X-Grid is entered</p>
+                </div>
+                <button onClick={() => setShowManageZones(false)} className="text-slate-400 hover:text-white text-xs">✕ Close</button>
+              </div>
+
+              <div className="space-y-2.5 mb-4">
+                {gridZones.map((zone) => (
+                  <div key={zone.id} className="bg-slate-900 border border-slate-700 p-3 rounded-lg flex flex-wrap items-center gap-3 text-sm">
+                    <span className="text-slate-400 font-medium">From:</span>
+                    <div className="flex items-center bg-slate-800 border border-slate-700 rounded-md px-2 py-1">
+                      <span className="text-slate-400 font-mono mr-1">X</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="42"
+                        value={zone.start}
+                        onChange={(e) => handleZoneFieldChange(zone.id, "start", e.target.value)}
+                        className="w-12 bg-transparent text-white font-mono focus:outline-none"
+                      />
+                    </div>
+
+                    <span className="text-slate-400 font-medium">To:</span>
+                    <div className="flex items-center bg-slate-800 border border-slate-700 rounded-md px-2 py-1">
+                      <span className="text-slate-400 font-mono mr-1">X</span>
+                      <input
+                        type="number"
+                        min="1"
+                        max="42"
+                        value={zone.end}
+                        onChange={(e) => handleZoneFieldChange(zone.id, "end", e.target.value)}
+                        className="w-12 bg-transparent text-white font-mono focus:outline-none"
+                      />
+                    </div>
+
+                    <span className="text-slate-400 font-medium">→ Auto-Fill P Park:</span>
+                    <input
+                      type="text"
+                      list="p-park-list"
+                      value={zone.pPark}
+                      onChange={(e) => handleZoneFieldChange(zone.id, "pPark", e.target.value)}
+                      className="w-20 bg-slate-800 border border-slate-700 rounded-md px-2.5 py-1 text-emerald-400 font-bold focus:outline-none focus:ring-1 focus:ring-purple-500"
+                    />
+
+                    <button
+                      onClick={() => handleDeleteZone(zone.id)}
+                      className="ml-auto text-slate-500 hover:text-red-400 text-xs px-2 py-1"
+                      title="Delete Zone Rule"
+                    >
+                      ✕ Remove
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-700">
+                <button
+                  onClick={handleAddZone}
+                  className="bg-purple-600 hover:bg-purple-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition"
+                >
+                  + Add Grid Range
+                </button>
+                <button
+                  onClick={handleResetZones}
+                  className="text-slate-400 hover:text-slate-200 text-xs underline"
+                >
+                  Reset to Default (X1–12 P2, X13–24 P3, X25–30 P4, X31–42 P5)
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Export to Excel Drawer */}
           {showExportDrawer && (
@@ -705,6 +911,7 @@
                       {displayRows.map((row, index) => {
                         const isOriginalDragged = draggedIndex === rows.findIndex(r => r.id === row.id);
                         const isHoverTarget = dragOverIndex === index;
+                        const warning = getGridWarning(row.grid, row.size);
 
                         return (
                           <tr
@@ -753,8 +960,26 @@
                                 value={row.grid}
                                 onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
                                 onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
-                                className="w-full bg-slate-900 border border-slate-700 text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                                className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
+                                  warning?.type === "error"
+                                    ? "border-red-500/70"
+                                    : warning?.type === "warn"
+                                    ? "border-amber-500/70"
+                                    : "border-slate-700"
+                                }`}
                               />
+                              {warning && (
+                                <p className={`text-[11px] mt-1 font-medium ${
+                                  warning.type === "error"
+                                    ? "text-red-400"
+                                    : warning.type === "warn"
+                                    ? "text-amber-400"
+                                    : "text-blue-400"
+                                }`}>
+                                  {warning.type === "error" ? "⛔ " : warning.type === "warn" ? "⚠️ " : "ℹ️ "}
+                                  {warning.text}
+                                </p>
+                              )}
                             </td>
                             <td className="py-3 px-4">
                               <input
