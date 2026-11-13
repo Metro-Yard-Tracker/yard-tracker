@@ -152,7 +152,8 @@
       grid: "",
       pPark: "",
       lastUpdated: "",
-      overridden: false
+      overridden: false,
+      sharedGridOverridden: false
     }));
 
     // Helper: Lookup assigned P-Park for an X-Grid
@@ -257,6 +258,12 @@
       const hours = String(now.getHours()).padStart(2, "0");
       const minutes = String(now.getMinutes()).padStart(2, "0");
       return `${month} ${day}, ${hours}${minutes}`;
+    };
+
+    // Helper: Format Service + Size label (e.g., "Service 120 (40ft)")
+    const formatServiceAndSize = (service, size) => {
+      const svcText = service ? `Service ${service}` : "Unassigned Service";
+      return size ? `${svcText} (${size})` : svcText;
     };
 
     // Reusable Clean Artistic X Grid Map Component with Dynamic P-Park Footer Bar
@@ -471,6 +478,9 @@
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
+      // Active Service Filters (Empty array or containing all services means showing all)
+      const [selectedServiceFilters, setSelectedServiceFilters] = useState([]);
+
       // Header X Grid Map Reference Panel Toggle
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
 
@@ -480,6 +490,10 @@
       // Remove Line Selection & Confirmation State
       const [isRemoveMode, setIsRemoveMode] = useState(false);
       const [rowPendingRemoval, setRowPendingRemoval] = useState(null);
+
+      // Shared Grid Conflict Modal State
+      const [sharedGridConflict, setSharedGridConflict] = useState(null);
+      const committedRowsSnapshotRef = useRef(INITIAL_ROWS);
 
       // Notification State
       const [notificationText, setNotificationText] = useState("");
@@ -532,7 +546,10 @@
         const rowsRef = db.ref("yard_rows");
         rowsRef.on("value", (snapshot) => {
           const data = snapshot.val();
-          if (data) setRows(data);
+          if (data) {
+            setRows(data);
+            committedRowsSnapshotRef.current = data;
+          }
           setIsSynced(true);
         });
 
@@ -579,6 +596,7 @@
       const saveRowsToFirebase = (newRows) => {
         const reindexedRows = newRows.map((r, i) => ({ ...r, id: i + 1 }));
         setRows(reindexedRows);
+        committedRowsSnapshotRef.current = reindexedRows;
         firebase.database().ref("yard_rows").set(reindexedRows);
       };
 
@@ -611,13 +629,14 @@
         setRows(updatedRows);
       };
 
-      const handleCommitRowChange = (id, field, value) => {
-        const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase() : value;
+      // Core commit helper used both directly and after confirming a shared-grid override
+      const finalizeRowCommit = (id, field, formattedValue, markSharedGridOverridden = false) => {
         const now = getCurrent24HourTimestamp();
+        const baselineRows = committedRowsSnapshotRef.current;
+        const currentRow = baselineRows.find(r => r.id === id) || rows.find(r => r.id === id);
+        if (!currentRow) return;
 
-        const currentRow = rows.find(r => r.id === id);
-        let resolvedPPark = currentRow ? currentRow.pPark : "";
-
+        let resolvedPPark = currentRow.pPark || "";
         if (field === "grid") {
           const autoPPark = getAssignedPPark(formattedValue, gridZones);
           if (autoPPark !== null) {
@@ -626,19 +645,27 @@
         } else if (field === "pPark") {
           resolvedPPark = formattedValue;
         }
-        
-        const updatedRows = rows.map(row => {
+
+        const updatedRows = baselineRows.map(row => {
           if (row.id === id) {
+            const fieldChanged = row[field] !== formattedValue;
             const shouldResetOverride = (field === "service" || field === "size" || field === "grid")
-              ? (row[field] !== formattedValue ? false : row.overridden)
+              ? (fieldChanged ? false : row.overridden)
               : row.overridden;
+
+            const nextSharedOverride = markSharedGridOverridden
+              ? true
+              : (field === "service" || field === "grid")
+              ? (fieldChanged ? false : Boolean(row.sharedGridOverridden))
+              : Boolean(row.sharedGridOverridden);
 
             return {
               ...row,
               [field]: formattedValue,
               pPark: resolvedPPark,
               lastUpdated: now,
-              overridden: shouldResetOverride
+              overridden: shouldResetOverride,
+              sharedGridOverridden: nextSharedOverride
             };
           }
           return row;
@@ -653,17 +680,80 @@
             service: field === "service" ? formattedValue : currentRow.service,
             size: field === "size" ? formattedValue : currentRow.size,
             grid: field === "grid" ? formattedValue : currentRow.grid,
-            action: `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}`
+            action: markSharedGridOverridden
+              ? `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"} (Shared Grid Overridden)`
+              : `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}`
           };
 
           firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
         }
       };
 
+      const handleCommitRowChange = (id, field, value) => {
+        const formattedValue = (field === "grid" || field === "pPark") ? value.toUpperCase().trim() : value;
+        const baselineRows = committedRowsSnapshotRef.current;
+        const currentRow = baselineRows.find(r => r.id === id);
+        if (!currentRow) return;
+
+        // Check for duplicate grid across two DIFFERENT services when Grid or Service changes
+        if (field === "grid" || field === "service") {
+          const candidateGrid = (field === "grid" ? formattedValue : (currentRow.grid || "")).trim().toUpperCase();
+          const candidateService = (field === "service" ? formattedValue : (currentRow.service || "")).trim();
+          const candidateSize = currentRow.size || "";
+
+          const isSameAsCommitted = currentRow[field] === formattedValue;
+
+          if (candidateGrid && candidateService && (!isSameAsCommitted || !currentRow.sharedGridOverridden)) {
+            const conflictingRows = baselineRows.filter(other => {
+              if (other.id === id) return false;
+              const otherGrid = (other.grid || "").trim().toUpperCase();
+              const otherService = (other.service || "").trim();
+              return otherGrid === candidateGrid && otherService !== "" && otherService !== candidateService;
+            });
+
+            if (conflictingRows.length > 0) {
+              const uniqueExisting = [];
+              const seenKeys = new Set();
+              conflictingRows.forEach(r => {
+                const label = formatServiceAndSize(r.service, r.size);
+                if (!seenKeys.has(label)) {
+                  seenKeys.add(label);
+                  uniqueExisting.push(label);
+                }
+              });
+
+              setSharedGridConflict({
+                rowId: id,
+                field,
+                newValue: formattedValue,
+                grid: candidateGrid,
+                incomingLabel: formatServiceAndSize(candidateService, candidateSize),
+                existingLabels: uniqueExisting
+              });
+              return;
+            }
+          }
+        }
+
+        finalizeRowCommit(id, field, formattedValue, false);
+      };
+
+      const handleConfirmSharedGridOverride = () => {
+        if (!sharedGridConflict) return;
+        const { rowId, field, newValue } = sharedGridConflict;
+        setSharedGridConflict(null);
+        finalizeRowCommit(rowId, field, newValue, true);
+      };
+
+      const handleCancelSharedGridConflict = () => {
+        setSharedGridConflict(null);
+        setRows([...committedRowsSnapshotRef.current]);
+      };
+
       // Handle clicking a grid tile inside the Row X Grid Map Dropdown
       const handleSelectGridFromMap = (rowId, gridCode) => {
-        handleCommitRowChange(rowId, "grid", gridCode);
         setOpenGridPickerRowId(null);
+        handleCommitRowChange(rowId, "grid", gridCode);
       };
 
       const handleOverrideRow = (id) => {
@@ -683,7 +773,8 @@
           grid: "",
           pPark: "",
           lastUpdated: now,
-          overridden: false
+          overridden: false,
+          sharedGridOverridden: false
         } : row);
         
         const logEntry = {
@@ -868,22 +959,35 @@
         setShowExportDrawer(false);
       };
 
+      // Service Filter toggle handler
+      const toggleServiceFilter = (svc) => {
+        if (selectedServiceFilters.includes(svc)) {
+          setSelectedServiceFilters(selectedServiceFilters.filter(s => s !== svc));
+        } else {
+          setSelectedServiceFilters([...selectedServiceFilters, svc]);
+        }
+      };
+
+      const clearServiceFilters = () => {
+        setSelectedServiceFilters([]);
+      };
+
       // Drag and Drop Logic
       const handleDragStart = (index) => {
-        if (isRemoveMode) return;
+        if (isRemoveMode || selectedServiceFilters.length > 0) return;
         setDraggedIndex(index);
       };
 
       const handleDragOver = (e, index) => {
         e.preventDefault();
-        if (isRemoveMode) return;
+        if (isRemoveMode || selectedServiceFilters.length > 0) return;
         if (dragOverIndex !== index) {
           setDragOverIndex(index);
         }
       };
 
       const handleDrop = (dropIndex) => {
-        if (isRemoveMode) return;
+        if (isRemoveMode || selectedServiceFilters.length > 0) return;
         if (draggedIndex === null || draggedIndex === dropIndex) {
           setDraggedIndex(null);
           setDragOverIndex(null);
@@ -932,7 +1036,8 @@
           grid: "",
           pPark: "",
           lastUpdated: "",
-          overridden: false
+          overridden: false,
+          sharedGridOverridden: false
         };
         saveRowsToFirebase([...rows, newRow]);
         setShowControlsMenu(false);
@@ -990,6 +1095,45 @@
           <datalist id="p-park-list">
             {P_PARK_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
+
+          {/* Shared Grid / Different Service Conflict Pop-Up Modal */}
+          {sharedGridConflict && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-800 border border-amber-500/60 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center gap-2.5 text-amber-400">
+                  <span className="text-xl">⚠️</span>
+                  <h3 className="text-lg font-bold text-white">Grid Already Planned for Another Service</h3>
+                </div>
+
+                <div className="space-y-2 text-sm text-slate-300">
+                  <p>
+                    Grid <strong className="text-white font-mono">{sharedGridConflict.grid}</strong> is currently planned for{" "}
+                    <strong className="text-amber-300">{sharedGridConflict.existingLabels.join(", ")}</strong>.
+                  </p>
+                  <p>
+                    Do you want to override and assign <strong className="text-blue-300">{sharedGridConflict.incomingLabel}</strong> here too?
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleCancelSharedGridConflict}
+                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmSharedGridOverride}
+                    className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold shadow-lg transition"
+                  >
+                    Yes, Override
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* Confirmation Modal for Removing a Selected Line */}
           {rowPendingRemoval && (
@@ -1517,6 +1661,55 @@
                     <thead>
                       <tr className="bg-slate-950 text-slate-400 text-xs uppercase tracking-wider border-b border-slate-700">
                         <th className="py-3.5 px-4 w-16 text-center rounded-tl-xl">#</th>
+                        {/* Service Filter Column In-Between # and Service */}
+                        <th className="py-3.5 px-4 min-w-[220px]">
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center justify-between">
+                              <span className="text-slate-300 font-bold text-[11px] tracking-wide flex items-center gap-1">
+                                <span>🔍</span> Filter Services:
+                              </span>
+                              {selectedServiceFilters.length > 0 && (
+                                <button
+                                  type="button"
+                                  onClick={clearServiceFilters}
+                                  className="text-[10px] text-blue-400 hover:underline lowercase font-normal"
+                                >
+                                  clear ({selectedServiceFilters.length})
+                                </button>
+                              )}
+                            </div>
+                            <div className="flex flex-wrap items-center gap-1">
+                              <button
+                                type="button"
+                                onClick={clearServiceFilters}
+                                className={`px-2 py-0.5 rounded text-[10px] font-semibold transition ${
+                                  selectedServiceFilters.length === 0
+                                    ? "bg-blue-600 text-white shadow-sm"
+                                    : "bg-slate-900 hover:bg-slate-800 text-slate-400 border border-slate-800"
+                                }`}
+                              >
+                                All
+                              </button>
+                              {services.map((svc) => {
+                                const isSelected = selectedServiceFilters.includes(svc);
+                                return (
+                                  <button
+                                    key={svc}
+                                    type="button"
+                                    onClick={() => toggleServiceFilter(svc)}
+                                    className={`px-2 py-0.5 rounded text-[10px] font-bold font-mono transition ${
+                                      isSelected
+                                        ? "bg-blue-600 text-white shadow-sm ring-1 ring-blue-400"
+                                        : "bg-slate-900 hover:bg-slate-800 text-slate-300 border border-slate-800"
+                                    }`}
+                                  >
+                                    {svc}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                          </div>
+                        </th>
                         <th className="py-3.5 px-4">Service</th>
                         <th className="py-3.5 px-4">Size</th>
                         <th className="py-3.5 px-4">Grid</th>
@@ -1527,7 +1720,11 @@
                     </thead>
                     <tbody className="divide-y divide-slate-700/50">
                       {displayRows.map((row, index) => {
-                        const isOriginalDragged = draggedIndex === rows.findIndex(r => r.id === row.id);
+                        const originalIndex = rows.findIndex(r => r.id === row.id);
+                        const isFilteredOut = selectedServiceFilters.length > 0 && (!row.service || !selectedServiceFilters.includes(row.service));
+                        if (isFilteredOut) return null;
+
+                        const isOriginalDragged = draggedIndex === originalIndex;
                         const isHoverTarget = dragOverIndex === index;
                         const status = evaluateRowGridStatus(row, dedicatedGrids);
                         const showWarning = status?.hasConflict && !row.overridden;
@@ -1536,8 +1733,8 @@
                         return (
                           <tr
                             key={row.id}
-                            draggable={!isRemoveMode}
-                            onDragStart={() => handleDragStart(rows.findIndex(r => r.id === row.id))}
+                            draggable={!isRemoveMode && selectedServiceFilters.length === 0}
+                            onDragStart={() => handleDragStart(originalIndex)}
                             onDragOver={(e) => handleDragOver(e, index)}
                             onDrop={() => handleDrop(index)}
                             onClick={() => {
@@ -1557,7 +1754,18 @@
                           >
                             <td className="py-3 px-4 text-slate-500 text-center text-xs font-mono flex items-center justify-center gap-1 cursor-grab active:cursor-grabbing">
                               <span className="text-slate-400 font-bold hover:text-blue-400 text-sm tracking-tighter">⋮⋮</span>
-                              <span>{index + 1}</span>
+                              <span>{row.id}</span>
+                            </td>
+                            {/* Filter Summary Cell / Placeholder */}
+                            <td className="py-3 px-4 align-top text-xs text-slate-500 italic font-mono">
+                              {row.service ? (
+                                <span className="inline-flex items-center gap-1 text-slate-400">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-blue-400"></span>
+                                  {row.service}
+                                </span>
+                              ) : (
+                                <span>--</span>
+                              )}
                             </td>
                             <td className="py-3 px-4 align-top">
                               <select
