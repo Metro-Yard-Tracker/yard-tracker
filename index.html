@@ -356,8 +356,8 @@
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
       const [openActionRowId, setOpenActionRowId] = useState(null);
 
-      // Train Block Modal State
-      const [trainBlockModalRow, setTrainBlockModalRow] = useState(null);
+      // Train Block Modal State (Using row ID for robust tracking)
+      const [trainBlockRowId, setTrainBlockRowId] = useState(null);
       const [tempGridInput, setTempGridInput] = useState("N/A");
 
       const [isRemoveMode, setIsRemoveMode] = useState(false);
@@ -412,7 +412,8 @@
               ...r,
               id: i + 1,
               trainBlocked: Boolean(r.trainBlocked),
-              tempGrid: r.tempGrid || "N/A"
+              tempGrid: r.tempGrid || "N/A",
+              overridden: Boolean(r.overridden)
             }));
             setRows(sanitized);
             committedRowsSnapshotRef.current = sanitized;
@@ -464,7 +465,8 @@
           ...r,
           id: i + 1,
           trainBlocked: Boolean(r.trainBlocked),
-          tempGrid: r.tempGrid || "N/A"
+          tempGrid: r.tempGrid || "N/A",
+          overridden: Boolean(r.overridden)
         }));
         setRows(reindexedRows);
         committedRowsSnapshotRef.current = reindexedRows;
@@ -619,12 +621,17 @@
         setRows([...committedRowsSnapshotRef.current]);
       };
 
+      const handleOverrideRow = (id) => {
+        const updatedRows = rows.map(row => row.id === id ? { ...row, overridden: true } : row);
+        saveRowsToFirebase(updatedRows);
+      };
+
       const handleOpenTrainBlockModal = (row) => {
         setOpenActionRowId(null);
         if (row.trainBlocked) {
           executeToggleTrainBlock(row.id, false, "N/A");
         } else {
-          setTrainBlockModalRow(row);
+          setTrainBlockRowId(row.id);
           setTempGridInput("N/A");
         }
       };
@@ -642,7 +649,7 @@
         } : row);
 
         saveRowsToFirebase(updatedRows);
-        setTrainBlockModalRow(null);
+        setTrainBlockRowId(null);
 
         const logEntry = {
           id: Date.now(),
@@ -985,6 +992,8 @@
         );
       });
 
+      const modalTargetRow = rows.find(r => r.id === trainBlockRowId);
+
       return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-6 font-sans">
           <datalist id="p-park-list">
@@ -992,7 +1001,7 @@
           </datalist>
 
           {/* Train Block Configuration Modal */}
-          {trainBlockModalRow && (
+          {trainBlockRowId !== null && modalTargetRow && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
               <div className="bg-slate-800 border border-amber-500/60 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
                 <div className="flex items-center gap-2.5 text-amber-400">
@@ -1002,7 +1011,7 @@
 
                 <div className="space-y-3 text-sm text-slate-300">
                   <p>
-                    Line <strong className="text-white">#{trainBlockModalRow.id}</strong> (Grid <strong className="text-emerald-400 font-mono">{trainBlockModalRow.grid || "Unassigned"}</strong>) will be restricted.
+                    Line <strong className="text-white">#{modalTargetRow.id}</strong> (Grid <strong className="text-emerald-400 font-mono">{modalTargetRow.grid || "Unassigned"}</strong>) will be restricted.
                   </p>
                   <div>
                     <label className="block text-xs font-semibold text-slate-400 uppercase tracking-wider mb-1.5">
@@ -1022,14 +1031,14 @@
                 <div className="flex items-center justify-end gap-3 pt-2">
                   <button
                     type="button"
-                    onClick={() => setTrainBlockModalRow(null)}
+                    onClick={() => setTrainBlockRowId(null)}
                     className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
                   >
                     Cancel
                   </button>
                   <button
                     type="button"
-                    onClick={() => executeToggleTrainBlock(trainBlockModalRow.id, true, tempGridInput.trim() || "N/A")}
+                    onClick={() => executeToggleTrainBlock(modalTargetRow.id, true, tempGridInput.trim() || "N/A")}
                     className="px-4 py-2 rounded-lg bg-amber-600 hover:bg-amber-500 text-white text-sm font-semibold shadow-lg transition"
                   >
                     Confirm Block
