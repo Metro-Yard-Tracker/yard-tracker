@@ -354,9 +354,8 @@
       const [selectedServiceFilters, setSelectedServiceFilters] = useState([]);
       const [showFilterDropdown, setShowFilterDropdown] = useState(false);
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
-      const [openActionRowId, setOpenActionRowId] = useState(null);
 
-      // Train Block Modal State (Using row ID for robust tracking)
+      // Train Block Modal State
       const [trainBlockRowId, setTrainBlockRowId] = useState(null);
       const [tempGridInput, setTempGridInput] = useState("N/A");
 
@@ -387,13 +386,11 @@
 
       const dropdownRef = useRef(null);
       const filterDropdownRef = useRef(null);
-      const actionMenuRef = useRef(null);
 
       useEffect(() => {
         const handleClickOutside = (event) => {
           if (dropdownRef.current && !dropdownRef.current.contains(event.target)) setShowControlsMenu(false);
           if (filterDropdownRef.current && !filterDropdownRef.current.contains(event.target)) setShowFilterDropdown(false);
-          if (actionMenuRef.current && !actionMenuRef.current.contains(event.target)) setOpenActionRowId(null);
         };
         document.addEventListener("mousedown", handleClickOutside);
         return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -626,16 +623,6 @@
         saveRowsToFirebase(updatedRows);
       };
 
-      const handleOpenTrainBlockModal = (row) => {
-        setOpenActionRowId(null);
-        if (row.trainBlocked) {
-          executeToggleTrainBlock(row.id, false, "N/A");
-        } else {
-          setTrainBlockRowId(row.id);
-          setTempGridInput("N/A");
-        }
-      };
-
       const executeToggleTrainBlock = (id, blockState, tempGridVal) => {
         const now = getCurrent24HourTimestamp();
         const targetRow = rows.find(r => r.id === id);
@@ -693,7 +680,6 @@
 
         firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
         saveRowsToFirebase(updatedRows);
-        setOpenActionRowId(null);
       };
 
       const startRemoveLineMode = () => {
@@ -1702,7 +1688,6 @@
                         const isBlocked = Boolean(row.trainBlocked);
                         const status = evaluateRowGridStatus(row, dedicatedGrids);
                         const showWarning = status?.hasConflict && !row.overridden;
-                        const isActionMenuOpen = openActionRowId === row.id;
 
                         return (
                           <tr
@@ -1828,65 +1813,46 @@
                             </td>
                             <td className="py-3 px-4 align-top pt-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
                             
-                            {/* ACTION COLUMN */}
-                            <td className="py-3 px-4 align-top pt-3.5 text-right relative" ref={actionMenuRef}>
+                            {/* ACTION COLUMN (Direct Inline Buttons - No Dropdown) */}
+                            <td className="py-3 px-4 align-top pt-3.5 text-right">
                               {isRemoveMode ? (
                                 <span className="inline-block text-red-300 group-hover:text-white bg-red-600/30 group-hover:bg-red-600 border border-red-500/50 text-xs font-semibold px-2.5 py-1.5 rounded-md transition">
                                   Select to Remove
                                 </span>
                               ) : (
-                                <div className="inline-flex items-center gap-1.5">
-                                  {isBlocked && (
-                                    <span className="hidden xl:inline-block text-[10px] font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40 px-2 py-1 rounded">
-                                      🛑 Blocked
-                                    </span>
-                                  )}
-
-                                  <div className="relative">
+                                <div className="inline-flex items-center justify-end gap-2">
+                                  {isBlocked ? (
                                     <button
                                       type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setOpenActionRowId(isActionMenuOpen ? null : row.id);
-                                      }}
-                                      className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition ${
-                                        isBlocked
-                                          ? "bg-amber-500/20 border-amber-500/60 text-amber-300"
-                                          : "bg-slate-900 hover:bg-slate-800 border-slate-700 text-slate-300"
-                                      }`}
+                                      onClick={() => executeToggleTrainBlock(row.id, false, "N/A")}
+                                      className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 transition flex items-center gap-1"
+                                      title="Unblock Grid"
                                     >
-                                      <span>⚙️ Actions</span>
-                                      <span className="text-[9px]">▼</span>
+                                      <span>✅ Unblock</span>
                                     </button>
+                                  ) : (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setTrainBlockRowId(row.id);
+                                        setTempGridInput("N/A");
+                                      }}
+                                      className="px-2.5 py-1.5 rounded-lg text-xs font-semibold bg-amber-500/20 hover:bg-amber-500/30 text-amber-300 border border-amber-500/40 transition flex items-center gap-1"
+                                      title="Block Grid for Train"
+                                    >
+                                      <span>🛑 Block</span>
+                                    </button>
+                                  )}
 
-                                    {isActionMenuOpen && (
-                                      <div 
-                                        className="absolute right-0 top-10 mt-1 w-52 bg-slate-950 border border-slate-700 rounded-xl shadow-2xl z-50 p-1.5 space-y-1 text-left"
-                                        onClick={(e) => e.stopPropagation()}
-                                      >
-                                        <button
-                                          type="button"
-                                          onClick={() => handleOpenTrainBlockModal(row)}
-                                          className={`w-full text-left px-3 py-2 rounded-lg text-xs font-semibold flex items-center gap-2 transition ${
-                                            isBlocked
-                                              ? "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25 border border-emerald-500/30"
-                                              : "bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 border border-amber-500/30"
-                                          }`}
-                                        >
-                                          <span>{isBlocked ? "✅ Unblock Grid" : "🛑 Block Grid for Train"}</span>
-                                        </button>
-
-                                        <button
-                                          type="button"
-                                          onClick={() => clearRow(row.id)}
-                                          disabled={!row.service && !row.size && !row.grid && !row.pPark}
-                                          className="w-full text-left px-3 py-2 rounded-lg text-xs font-medium text-red-400 hover:bg-red-500/20 disabled:opacity-30 flex items-center gap-2 transition"
-                                        >
-                                          <span>🗑️ Clear Line</span>
-                                        </button>
-                                      </div>
-                                    )}
-                                  </div>
+                                  <button
+                                    type="button"
+                                    onClick={() => clearRow(row.id)}
+                                    disabled={!row.service && !row.size && !row.grid && !row.pPark}
+                                    className="px-2.5 py-1.5 rounded-lg text-xs font-medium text-red-400 hover:bg-red-500/20 border border-red-500/30 disabled:opacity-30 transition flex items-center gap-1"
+                                    title="Clear Line"
+                                  >
+                                    <span>🗑️ Clear</span>
+                                  </button>
                                 </div>
                               )}
                             </td>
