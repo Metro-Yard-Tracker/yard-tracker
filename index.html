@@ -30,15 +30,6 @@
       firebase.initializeApp({ databaseURL: FIREBASE_DB_URL });
     }
 
-    // Grid Options: X1-X42, TF1-TF7, T1-T4
-    const TF_OPTIONS = Array.from({ length: 7 }, (_, i) => `TF${i + 1}`);
-    const T_OPTIONS = Array.from({ length: 4 }, (_, i) => `T${i + 1}`);
-    const GRID_X_OPTIONS = [
-      ...Array.from({ length: 42 }, (_, i) => `X${i + 1}`),
-      ...TF_OPTIONS,
-      ...T_OPTIONS
-    ];
-
     const P_PARK_OPTIONS = Array.from({ length: 11 }, (_, i) => `P${i + 1}`);
     const DEFAULT_SERVICES = ["120", "192", "194", "CMA", "225"];
     const SIZES = ["20ft", "40ft"];
@@ -49,6 +40,14 @@
       { id: 2, start: 13, end: 24, pPark: "P3" },
       { id: 3, start: 25, end: 30, pPark: "P4" },
       { id: 4, start: 31, end: 42, pPark: "P5" }
+    ];
+
+    // Default Custom Grids with P-Park assignments
+    const DEFAULT_CUSTOM_GRIDS = [
+      { id: 1, grid: "X37", pPark: "P5" },
+      { id: 2, grid: "X31", pPark: "P5" },
+      { id: 3, grid: "X39", pPark: "P5" },
+      { id: 4, grid: "X41", pPark: "P5" }
     ];
 
     // Default Dedicated Service Grids
@@ -125,9 +124,18 @@
       tempGrid: "N/A"
     }));
 
-    const getAssignedPPark = (gridStr, zones) => {
+    const getAssignedPPark = (gridStr, zones, customGrids = []) => {
       if (!gridStr) return null;
-      const match = gridStr.trim().toUpperCase().match(/^X(\d+)$/);
+      const g = gridStr.trim().toUpperCase();
+      
+      // Check exact custom grid match first
+      const customMatch = customGrids.find(cg => cg.grid.trim().toUpperCase() === g);
+      if (customMatch && customMatch.pPark) {
+        return customMatch.pPark;
+      }
+
+      // Fall back to zone range check
+      const match = g.match(/^X(\d+)$/);
       if (!match) return null;
       const num = parseInt(match[1], 10);
       const zone = zones.find(z => num >= Number(z.start) && num <= Number(z.end));
@@ -347,6 +355,7 @@
       const [rows, setRows] = useState(INITIAL_ROWS);
       const [services, setServices] = useState(DEFAULT_SERVICES);
       const [gridZones, setGridZones] = useState(DEFAULT_GRID_ZONES);
+      const [customGrids, setCustomGrids] = useState(DEFAULT_CUSTOM_GRIDS);
       const [dedicatedGrids, setDedicatedGrids] = useState(DEFAULT_DEDICATED_GRIDS);
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
@@ -377,6 +386,7 @@
       const [showControlsMenu, setShowControlsMenu] = useState(false);
       const [showManageServices, setShowManageServices] = useState(false);
       const [showManageZones, setShowManageZones] = useState(false);
+      const [showManageGrids, setShowManageGrids] = useState(false);
       const [showManageDedicated, setShowManageDedicated] = useState(false);
       const [newServiceInput, setNewServiceInput] = useState("");
       const [editingServiceIndex, setEditingServiceIndex] = useState(null);
@@ -430,6 +440,12 @@
           if (data && Array.isArray(data)) setGridZones(data);
         });
 
+        const customGridsRef = db.ref("yard_custom_grids");
+        customGridsRef.on("value", (snapshot) => {
+          const data = snapshot.val();
+          if (data && Array.isArray(data)) setCustomGrids(data);
+        });
+
         const dedicatedRef = db.ref("yard_dedicated_grids");
         dedicatedRef.on("value", (snapshot) => {
           const data = snapshot.val();
@@ -451,6 +467,7 @@
           rowsRef.off();
           servicesRef.off();
           zonesRef.off();
+          customGridsRef.off();
           dedicatedRef.off();
           historyRef.off();
           notificationRef.off();
@@ -475,6 +492,11 @@
         firebase.database().ref("yard_grid_zones").set(updatedZones);
       };
 
+      const saveCustomGridsToFirebase = (updatedGrids) => {
+        setCustomGrids(updatedGrids);
+        firebase.database().ref("yard_custom_grids").set(updatedGrids);
+      };
+
       const saveDedicatedGridsToFirebase = (updatedDedicated) => {
         setDedicatedGrids(updatedDedicated);
         firebase.database().ref("yard_dedicated_grids").set(updatedDedicated);
@@ -486,7 +508,7 @@
           if (row.id !== id) return row;
           const resetOverride = (field === "grid" || field === "service" || field === "size") ? false : row.overridden;
           if (field === "grid") {
-            const autoPPark = getAssignedPPark(formattedValue, gridZones);
+            const autoPPark = getAssignedPPark(formattedValue, gridZones, customGrids);
             return {
               ...row,
               grid: formattedValue,
@@ -507,7 +529,7 @@
 
         let resolvedPPark = currentRow.pPark || "";
         if (field === "grid") {
-          const autoPPark = getAssignedPPark(formattedValue, gridZones);
+          const autoPPark = getAssignedPPark(formattedValue, gridZones, customGrids);
           if (autoPPark !== null) {
             resolvedPPark = autoPPark;
           }
@@ -745,6 +767,29 @@
         saveGridZonesToFirebase(DEFAULT_GRID_ZONES);
       };
 
+      // Custom Grid Handlers
+      const handleCustomGridFieldChange = (id, key, val) => {
+        const updated = customGrids.map(cg => {
+          if (cg.id !== id) return cg;
+          return { ...cg, [key]: key === "grid" || key === "pPark" ? val.toUpperCase() : val };
+        });
+        saveCustomGridsToFirebase(updated);
+      };
+
+      const handleAddCustomGrid = () => {
+        const nextId = customGrids.length > 0 ? Math.max(...customGrids.map(cg => cg.id)) + 1 : 1;
+        const newItem = { id: nextId, grid: "X43", pPark: "P5" };
+        saveCustomGridsToFirebase([...customGrids, newItem]);
+      };
+
+      const handleDeleteCustomGrid = (id) => {
+        saveCustomGridsToFirebase(customGrids.filter(cg => cg.id !== id));
+      };
+
+      const handleResetCustomGrids = () => {
+        saveCustomGridsToFirebase(DEFAULT_CUSTOM_GRIDS);
+      };
+
       const handleDedicatedFieldChange = (id, key, val) => {
         const updated = dedicatedGrids.map(d => {
           if (d.id !== id) return d;
@@ -772,6 +817,7 @@
         setShowManageServices(false);
         setShowExportDrawer(false);
         setShowManageZones(false);
+        setShowManageGrids(false);
         setShowManageDedicated(false);
       };
 
@@ -1220,6 +1266,17 @@
                     </button>
                     <button
                       onClick={() => {
+                        const nextState = !showManageGrids;
+                        closeAllDrawers();
+                        setShowManageGrids(nextState);
+                        setShowControlsMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-teal-400 hover:bg-slate-700/60 flex items-center gap-2 border-b border-slate-700/50"
+                    >
+                      <span>🏗️</span> Add/Remove Grids
+                    </button>
+                    <button
+                      onClick={() => {
                         const nextState = !showManageDedicated;
                         closeAllDrawers();
                         setShowManageDedicated(nextState);
@@ -1256,6 +1313,68 @@
               </div>
             </div>
           </header>
+
+          {/* Manage Custom Grids Drawer */}
+          {showManageGrids && (
+            <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-teal-500/40 p-5 rounded-xl shadow-xl">
+              <div className="flex justify-between items-center mb-3">
+                <div>
+                  <h3 className="text-sm font-bold text-teal-400 uppercase tracking-wider flex items-center gap-2">
+                    <span>🏗️</span> Add / Remove Grids & Assign P-Park
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">Define specific custom grids and assign which P Park they auto-fill</p>
+                </div>
+                <button onClick={() => setShowManageGrids(false)} className="text-slate-400 hover:text-white text-xs">✕ Close</button>
+              </div>
+
+              <div className="space-y-2.5 mb-4">
+                {customGrids.map((item) => (
+                  <div key={item.id} className="bg-slate-900 border border-slate-700 p-3 rounded-lg flex flex-wrap items-center gap-3 text-sm">
+                    <span className="text-slate-400 font-medium">Grid Code:</span>
+                    <input
+                      type="text"
+                      value={item.grid}
+                      onChange={(e) => handleCustomGridFieldChange(item.id, "grid", e.target.value)}
+                      placeholder="e.g. X43, TF8"
+                      className="w-28 bg-slate-800 border border-slate-700 rounded-md px-2.5 py-1 text-white font-bold font-mono focus:outline-none focus:ring-1 focus:ring-teal-500"
+                    />
+
+                    <span className="text-slate-400 font-medium">→ Assigned P Park:</span>
+                    <input
+                      type="text"
+                      list="p-park-list"
+                      value={item.pPark}
+                      onChange={(e) => handleCustomGridFieldChange(item.id, "pPark", e.target.value)}
+                      placeholder="e.g. P5"
+                      className="w-24 bg-slate-800 border border-slate-700 rounded-md px-2.5 py-1 text-emerald-400 font-bold focus:outline-none focus:ring-1 focus:ring-teal-500"
+                    />
+
+                    <button
+                      onClick={() => handleDeleteCustomGrid(item.id)}
+                      className="ml-auto text-slate-500 hover:text-red-400 text-xs px-2 py-1"
+                    >
+                      ✕ Remove Grid
+                    </button>
+                  </div>
+                ))}
+              </div>
+
+              <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-slate-700">
+                <button
+                  onClick={handleAddCustomGrid}
+                  className="bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold px-3.5 py-2 rounded-lg transition"
+                >
+                  + Add Grid
+                </button>
+                <button
+                  onClick={handleResetCustomGrids}
+                  className="text-slate-400 hover:text-slate-200 text-xs underline"
+                >
+                  Reset to Default
+                </button>
+              </div>
+            </div>
+          )}
 
           {/* Manage Dedicated Service Grids Drawer */}
           {showManageDedicated && (
