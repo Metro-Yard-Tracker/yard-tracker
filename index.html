@@ -407,7 +407,6 @@
         rowsRef.on("value", (snapshot) => {
           const data = snapshot.val();
           if (data && Array.isArray(data)) {
-            // Ensure every row has safe defaults for trainBlocked & tempGrid
             const sanitized = data.map((r, i) => ({
               ...INITIAL_ROWS[i % INITIAL_ROWS.length],
               ...r,
@@ -1585,7 +1584,7 @@
                     </button>
                     <button
                       onClick={handleClearNotification}
-                      className="text-red-400 hover:text-white bg-red-500/20 bg-red-500/30 border border-red-500/30 px-2.5 py-1 rounded-md text-xs font-semibold transition"
+                      className="text-red-400 hover:text-white bg-red-500/20 hover:bg-red-500/30 border border-red-500/30 px-2.5 py-1 rounded-md text-xs font-semibold transition"
                     >
                       ✕ Remove
                     </button>
@@ -1837,7 +1836,10 @@
                                   <div className="relative">
                                     <button
                                       type="button"
-                                      onClick={() => setOpenActionRowId(isActionMenuOpen ? null : row.id)}
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setOpenActionRowId(isActionMenuOpen ? null : row.id);
+                                      }}
                                       className={`px-3 py-1.5 rounded-lg text-xs font-semibold border flex items-center gap-1.5 transition ${
                                         isBlocked
                                           ? "bg-amber-500/20 border-amber-500/60 text-amber-300"
@@ -1849,7 +1851,10 @@
                                     </button>
 
                                     {isActionMenuOpen && (
-                                      <div className="absolute right-0 top-10 mt-1 w-52 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl z-50 p-1.5 space-y-1 text-left">
+                                      <div 
+                                        className="absolute right-0 top-10 mt-1 w-52 bg-slate-950 border border-slate-700 rounded-xl shadow-2xl z-50 p-1.5 space-y-1 text-left"
+                                        onClick={(e) => e.stopPropagation()}
+                                      >
                                         <button
                                           type="button"
                                           onClick={() => handleOpenTrainBlockModal(row)}
