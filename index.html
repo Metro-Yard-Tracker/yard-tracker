@@ -120,6 +120,7 @@
       lastUpdated: "",
       overridden: false,
       sharedGridOverridden: false,
+      n4BlockedOverridden: false,
       trainBlocked: false,
       tempGrid: "N/A"
     }));
@@ -128,13 +129,11 @@
       if (!gridStr) return null;
       const g = gridStr.trim().toUpperCase();
       
-      // Check exact custom grid match first
       const customMatch = customGrids.find(cg => cg.grid.trim().toUpperCase() === g);
       if (customMatch && customMatch.pPark) {
         return customMatch.pPark;
       }
 
-      // Fall back to zone range check
       const match = g.match(/^X(\d+)$/);
       if (!match) return null;
       const num = parseInt(match[1], 10);
@@ -157,10 +156,20 @@
       return segments;
     };
 
-    const evaluateRowGridStatus = (row, dedicatedGrids) => {
+    const sortGridCodes = (gridList) => {
+      return [...gridList].sort((a, b) => {
+        const numA = parseInt(a.replace(/\D/g, ""), 10) || 0;
+        const numB = parseInt(b.replace(/\D/g, ""), 10) || 0;
+        return numA - numB || a.localeCompare(b);
+      });
+    };
+
+    const evaluateRowGridStatus = (row, dedicatedGrids, n4BlockedGrids = []) => {
       const isBlocked = Boolean(row.trainBlocked);
-      if (!row.grid && !isBlocked) return null;
       const g = (row.grid || "").trim().toUpperCase();
+      const isN4Blocked = g !== "" && n4BlockedGrids.includes(g);
+
+      if (!g && !isBlocked) return null;
       const slotInfo = getGridSlotInfo(g);
       const dedicatedRule = dedicatedGrids.find(d => d.grid.trim().toUpperCase() === g);
 
@@ -168,6 +177,10 @@
 
       if (isBlocked) {
         issues.push(`🛑 Grid blocked for train load-out`);
+      }
+
+      if (isN4Blocked) {
+        issues.push(`🔒 Grid blocked (Gated out of CTMS → N4)`);
       }
 
       if (slotInfo && slotInfo.baySize === "INACTIVE") {
@@ -196,6 +209,7 @@
         slotInfo,
         dedicatedRule,
         issues,
+        isN4Blocked,
         hasConflict: issues.length > 0 || isBlocked
       };
     };
@@ -239,10 +253,58 @@
       return size ? `${svcText} (${size})` : svcText;
     };
 
-    function XGridMapBoard({ onClose, gridZones }) {
+    function XGridMapBoard({ onClose, gridZones, n4BlockedGrids, onUpdateN4BlockedGrids, rows }) {
+      const [selectedGrids, setSelectedGrids] = useState([]);
+      const [showOnlyBlocked, setShowOnlyBlocked] = useState(false);
+
+      const n4BlockedSet = new Set(n4BlockedGrids.map(g => g.toUpperCase()));
+      const selectedSet = new Set(selectedGrids);
+
+      // Map active Metro rows sitting in each grid
+      const activeMetroByGrid = {};
+      rows.forEach((r) => {
+        const g = (r.grid || "").trim().toUpperCase();
+        if (g && (r.service || r.size || r.pPark)) {
+          if (!activeMetroByGrid[g]) activeMetroByGrid[g] = [];
+          activeMetroByGrid[g].push(`Line #${r.id} (${formatServiceAndSize(r.service, r.size)})`);
+        }
+      });
+
+      const toggleSelectGrid = (gCode) => {
+        if (GRIDS_INACTIVE.has(gCode)) return;
+        setSelectedGrids((prev) =>
+          prev.includes(gCode) ? prev.filter((item) => item !== gCode) : [...prev, gCode]
+        );
+      };
+
+      const handleBlockSelected = () => {
+        if (selectedGrids.length === 0) return;
+        const merged = Array.from(new Set([...n4BlockedGrids, ...selectedGrids]));
+        onUpdateN4BlockedGrids(sortGridCodes(merged), "Blocked", selectedGrids);
+        setSelectedGrids([]);
+      };
+
+      const handleUnblockSelected = () => {
+        if (selectedGrids.length === 0) return;
+        const toRemove = new Set(selectedGrids);
+        const remaining = n4BlockedGrids.filter((g) => !toRemove.has(g));
+        onUpdateN4BlockedGrids(sortGridCodes(remaining), "Unblocked", selectedGrids);
+        setSelectedGrids([]);
+      };
+
+      const handleSingleUnblock = (gCode) => {
+        const remaining = n4BlockedGrids.filter((g) => g !== gCode);
+        onUpdateN4BlockedGrids(sortGridCodes(remaining), "Unblocked", [gCode]);
+        setSelectedGrids((prev) => prev.filter((g) => g !== gCode));
+      };
+
+      const selectedBlockedCount = selectedGrids.filter((g) => n4BlockedSet.has(g)).length;
+      const selectedUnblockedCount = selectedGrids.length - selectedBlockedCount;
+
       return (
         <div className="bg-slate-950/95 backdrop-blur-md border border-slate-700/90 rounded-2xl shadow-2xl p-4 w-full overflow-x-auto">
-          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3.5 border-b border-slate-800/90">
+          {/* Top Header & Legend */}
+          <div className="flex flex-wrap items-center justify-between gap-3 pb-3 mb-3 border-b border-slate-800/90">
             <div className="flex flex-wrap items-center gap-4 text-xs">
               <span className="font-bold text-white uppercase tracking-wider flex items-center gap-1.5">
                 <span className="text-blue-400">🗺️</span> X Grid Map Reference
@@ -254,6 +316,14 @@
               <span className="inline-flex items-center gap-1.5 text-emerald-300 font-medium">
                 <span className="w-3.5 h-3.5 rounded-[3px] bg-gradient-to-b from-emerald-400 to-emerald-500 border border-emerald-300/70 shadow-sm inline-block"></span>
                 40ft Bay
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-rose-300 font-semibold">
+                <span className="w-3.5 h-3.5 rounded-[3px] bg-rose-600 border border-rose-400 shadow-sm inline-block"></span>
+                Blocked (CTMS → N4)
+              </span>
+              <span className="inline-flex items-center gap-1.5 text-cyan-300 font-semibold">
+                <span className="w-3.5 h-3.5 rounded-[3px] bg-cyan-500/30 border-2 border-cyan-400 inline-block"></span>
+                Selected
               </span>
               <span className="inline-flex items-center gap-1.5 text-slate-300 font-medium">
                 <span className="w-3.5 h-3.5 rounded-[3px] bg-white/95 border border-slate-400 inline-block"></span>
@@ -274,6 +344,105 @@
             </button>
           </div>
 
+          {/* CTMS -> N4 Grid Block Action Toolbar */}
+          <div className="flex flex-wrap items-center justify-between gap-3 bg-slate-900/90 border border-slate-800 rounded-xl p-2.5 mb-3.5 text-xs">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="text-slate-300 font-medium">
+                Click X-grids below to select single or multiple:
+              </span>
+
+              {selectedGrids.length > 0 ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="bg-cyan-500/20 text-cyan-300 border border-cyan-500/40 px-2 py-0.5 rounded font-mono font-bold">
+                    {selectedGrids.length} Selected ({sortGridCodes(selectedGrids).join(", ")})
+                  </span>
+
+                  {selectedUnblockedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleBlockSelected}
+                      className="px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white font-semibold shadow transition flex items-center gap-1"
+                    >
+                      <span>🔒 Block Selected (CTMS → N4)</span>
+                    </button>
+                  )}
+
+                  {selectedBlockedCount > 0 && (
+                    <button
+                      type="button"
+                      onClick={handleUnblockSelected}
+                      className="px-3 py-1 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold shadow transition flex items-center gap-1"
+                    >
+                      <span>🔓 Unblock Selected</span>
+                    </button>
+                  )}
+
+                  <button
+                    type="button"
+                    onClick={() => setSelectedGrids([])}
+                    className="text-slate-400 hover:text-white underline px-1"
+                  >
+                    Clear Selection
+                  </button>
+                </div>
+              ) : (
+                <span className="text-slate-500 italic">No grids selected</span>
+              )}
+            </div>
+
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setShowOnlyBlocked(!showOnlyBlocked)}
+                className={`px-3 py-1 rounded-lg font-semibold border transition flex items-center gap-1.5 ${
+                  showOnlyBlocked
+                    ? "bg-rose-600/30 border-rose-500 text-rose-200"
+                    : "bg-slate-800 hover:bg-slate-700 border-slate-700 text-slate-300"
+                }`}
+              >
+                <span>🔒</span>
+                <span>{showOnlyBlocked ? "Showing Blocked Grids Only" : `View Blocked Grids (${n4BlockedGrids.length})`}</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Active CTMS -> N4 Blocked Grids Summary Strip */}
+          {n4BlockedGrids.length > 0 && (
+            <div className="mb-3.5 bg-rose-950/40 border border-rose-500/40 rounded-xl px-3 py-2 flex flex-wrap items-center gap-2 text-xs">
+              <span className="font-bold text-rose-300 flex items-center gap-1.5 shrink-0">
+                <span>🔒</span> Blocked Grids (Gated Out of CTMS → N4):
+              </span>
+              <div className="flex flex-wrap items-center gap-1.5">
+                {sortGridCodes(n4BlockedGrids).map((gCode) => {
+                  const metroSeated = activeMetroByGrid[gCode];
+                  return (
+                    <span
+                      key={gCode}
+                      className="inline-flex items-center gap-1.5 bg-rose-600/25 border border-rose-500/50 text-rose-100 font-mono font-bold px-2 py-0.5 rounded-md"
+                      title={metroSeated ? `Metro seated: ${metroSeated.join(", ")}` : "Blocked (CTMS → N4)"}
+                    >
+                      <span>{gCode}</span>
+                      {metroSeated && (
+                        <span className="text-[10px] bg-amber-500/30 text-amber-200 border border-amber-400/50 px-1 rounded font-sans">
+                          ⚠️ Metro
+                        </span>
+                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleSingleUnblock(gCode)}
+                        className="text-rose-300 hover:text-white ml-0.5 font-sans"
+                        title={`Unblock ${gCode}`}
+                      >
+                        ✕
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* 7 Vertical Grid Blocks */}
           <div className="flex items-stretch justify-between gap-3.5 pb-1 min-w-max">
             {YARD_MAP_BLOCKS.map((block) => {
               const pParkSegments = getBlockPParkSegments(block.grids, gridZones);
@@ -296,33 +465,78 @@
                       {block.grids.map((gCode) => {
                         const is20 = GRIDS_20FT.has(gCode);
                         const isInactive = GRIDS_INACTIVE.has(gCode);
+                        const isN4Blocked = n4BlockedSet.has(gCode);
+                        const isSelected = selectedSet.has(gCode);
+                        const hasMetro = Boolean(activeMetroByGrid[gCode]);
+                        const isDimmed = showOnlyBlocked && !isN4Blocked;
 
                         return (
-                          <div key={gCode} className="w-full flex items-center rounded-md px-1 py-0.5 hover:bg-slate-800/40">
-                            <span className="w-8 shrink-0 text-left text-[11px] font-bold font-mono text-slate-300">
+                          <div
+                            key={gCode}
+                            onClick={() => toggleSelectGrid(gCode)}
+                            title={
+                              isInactive
+                                ? `${gCode}: Inactive`
+                                : `${gCode}${isN4Blocked ? " [BLOCKED: CTMS → N4]" : ""}${hasMetro ? ` • Metro seated: ${activeMetroByGrid[gCode].join(", ")}` : ""} (Click to select)`
+                            }
+                            className={`w-full flex items-center rounded-md px-1 py-0.5 transition ${
+                              isInactive
+                                ? "cursor-not-allowed opacity-60"
+                                : "cursor-pointer"
+                            } ${
+                              isSelected
+                                ? "bg-cyan-500/25 ring-1 ring-cyan-400"
+                                : isN4Blocked
+                                ? "bg-rose-500/20 ring-1 ring-rose-500/70"
+                                : "hover:bg-slate-800/70"
+                            } ${isDimmed ? "opacity-20" : ""}`}
+                          >
+                            <span
+                              className={`w-8 shrink-0 text-left text-[11px] font-bold font-mono flex items-center gap-0.5 ${
+                                isSelected
+                                  ? "text-cyan-300"
+                                  : isN4Blocked
+                                  ? "text-rose-300"
+                                  : "text-slate-300"
+                              }`}
+                            >
                               {gCode}
                             </span>
 
                             {isInactive ? (
                               <div style={{ width: `${block.letters.length * 20 - 4}px` }} className="h-4 bg-slate-950 border border-slate-800/90 rounded-[3px]" />
                             ) : (
-                              <div className="flex gap-1">
+                              <div className="flex gap-1 relative">
                                 {block.letters.map((letter) => {
                                   const isBlockedSlotA = (gCode === "X4" || gCode === "X5") && letter === "A";
                                   if (isBlockedSlotA) {
                                     return <div key={letter} className="w-4 h-4 bg-white/95 border border-slate-400 rounded-[3px] shadow-sm" />;
                                   }
+
+                                  let slotStyle = is20
+                                    ? "bg-gradient-to-b from-amber-300 to-amber-400 border-amber-500/80"
+                                    : "bg-gradient-to-b from-emerald-400 to-emerald-500 border-emerald-300/70";
+
+                                  if (isN4Blocked) {
+                                    slotStyle = "bg-gradient-to-b from-rose-500 to-rose-600 border-rose-300/80";
+                                  }
+                                  if (isSelected) {
+                                    slotStyle += " ring-1 ring-cyan-300";
+                                  }
+
                                   return (
                                     <div
                                       key={letter}
-                                      className={`w-4 h-4 rounded-[3px] border shadow-sm ${
-                                        is20
-                                          ? "bg-gradient-to-b from-amber-300 to-amber-400 border-amber-500/80"
-                                          : "bg-gradient-to-b from-emerald-400 to-emerald-500 border-emerald-300/70"
-                                      }`}
+                                      className={`w-4 h-4 rounded-[3px] border shadow-sm transition ${slotStyle}`}
                                     />
                                   );
                                 })}
+
+                                {isN4Blocked && (
+                                  <span className="absolute inset-0 flex items-center justify-center text-[9px] font-extrabold text-white tracking-wider drop-shadow pointer-events-none">
+                                    🔒 N4{hasMetro ? " ⚠️" : ""}
+                                  </span>
+                                )}
                               </div>
                             )}
                           </div>
@@ -357,6 +571,7 @@
       const [gridZones, setGridZones] = useState(DEFAULT_GRID_ZONES);
       const [customGrids, setCustomGrids] = useState(DEFAULT_CUSTOM_GRIDS);
       const [dedicatedGrids, setDedicatedGrids] = useState(DEFAULT_DEDICATED_GRIDS);
+      const [n4BlockedGrids, setN4BlockedGrids] = useState([]);
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
@@ -371,6 +586,7 @@
       const [isRemoveMode, setIsRemoveMode] = useState(false);
       const [rowPendingRemoval, setRowPendingRemoval] = useState(null);
       const [sharedGridConflict, setSharedGridConflict] = useState(null);
+      const [n4BlockedWarningConflict, setN4BlockedWarningConflict] = useState(null);
       const committedRowsSnapshotRef = useRef(INITIAL_ROWS);
 
       const [notificationText, setNotificationText] = useState("");
@@ -420,7 +636,8 @@
               id: i + 1,
               trainBlocked: Boolean(r.trainBlocked),
               tempGrid: r.tempGrid || "N/A",
-              overridden: Boolean(r.overridden)
+              overridden: Boolean(r.overridden),
+              n4BlockedOverridden: Boolean(r.n4BlockedOverridden)
             }));
             setRows(sanitized);
             committedRowsSnapshotRef.current = sanitized;
@@ -452,6 +669,16 @@
           if (data && Array.isArray(data)) setDedicatedGrids(data);
         });
 
+        const n4BlockedRef = db.ref("yard_n4_blocked_grids");
+        n4BlockedRef.on("value", (snapshot) => {
+          const data = snapshot.val();
+          if (data && Array.isArray(data)) {
+            setN4BlockedGrids(data.map(g => String(g).toUpperCase()));
+          } else {
+            setN4BlockedGrids([]);
+          }
+        });
+
         const historyRef = db.ref("yard_history");
         historyRef.on("value", (snapshot) => {
           const data = snapshot.val();
@@ -469,6 +696,7 @@
           zonesRef.off();
           customGridsRef.off();
           dedicatedRef.off();
+          n4BlockedRef.off();
           historyRef.off();
           notificationRef.off();
         };
@@ -480,11 +708,31 @@
           id: i + 1,
           trainBlocked: Boolean(r.trainBlocked),
           tempGrid: r.tempGrid || "N/A",
-          overridden: Boolean(r.overridden)
+          overridden: Boolean(r.overridden),
+          n4BlockedOverridden: Boolean(r.n4BlockedOverridden)
         }));
         setRows(reindexedRows);
         committedRowsSnapshotRef.current = reindexedRows;
         firebase.database().ref("yard_rows").set(reindexedRows);
+      };
+
+      const handleUpdateN4BlockedGrids = (updatedList, actionVerb, changedGrids) => {
+        const cleaned = Array.from(new Set(updatedList.map(g => g.trim().toUpperCase())));
+        setN4BlockedGrids(cleaned);
+        firebase.database().ref("yard_n4_blocked_grids").set(cleaned);
+
+        if (changedGrids && changedGrids.length > 0) {
+          const now = getCurrent24HourTimestamp();
+          const logEntry = {
+            id: Date.now(),
+            timestamp: now,
+            service: "CTMS → N4",
+            size: "--",
+            grid: sortGridCodes(changedGrids).join(", "),
+            action: `${actionVerb} ${sortGridCodes(changedGrids).join(", ")} (Gated out of CTMS → N4)`
+          };
+          firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
+        }
       };
 
       const saveGridZonesToFirebase = (updatedZones) => {
@@ -507,21 +755,24 @@
         const updatedRows = rows.map(row => {
           if (row.id !== id) return row;
           const resetOverride = (field === "grid" || field === "service" || field === "size") ? false : row.overridden;
+          const resetN4Override = (field === "grid") ? false : row.n4BlockedOverridden;
           if (field === "grid") {
             const autoPPark = getAssignedPPark(formattedValue, gridZones, customGrids);
             return {
               ...row,
               grid: formattedValue,
               pPark: autoPPark !== null ? autoPPark : row.pPark,
-              overridden: resetOverride
+              overridden: resetOverride,
+              n4BlockedOverridden: resetN4Override
             };
           }
-          return { ...row, [field]: formattedValue, overridden: resetOverride };
+          return { ...row, [field]: formattedValue, overridden: resetOverride, n4BlockedOverridden: resetN4Override };
         });
         setRows(updatedRows);
       };
 
-      const finalizeRowCommit = (id, field, formattedValue, markSharedGridOverridden = false) => {
+      const finalizeRowCommit = (id, field, formattedValue, options = {}) => {
+        const { markSharedGridOverridden = false, markN4BlockedOverridden = false } = options;
         const now = getCurrent24HourTimestamp();
         const baselineRows = committedRowsSnapshotRef.current;
         const currentRow = baselineRows.find(r => r.id === id) || rows.find(r => r.id === id);
@@ -550,13 +801,20 @@
               ? (fieldChanged ? false : Boolean(row.sharedGridOverridden))
               : Boolean(row.sharedGridOverridden);
 
+            const nextN4Override = markN4BlockedOverridden
+              ? true
+              : field === "grid"
+              ? (fieldChanged ? false : Boolean(row.n4BlockedOverridden))
+              : Boolean(row.n4BlockedOverridden);
+
             return {
               ...row,
               [field]: formattedValue,
               pPark: resolvedPPark,
               lastUpdated: now,
               overridden: shouldResetOverride,
-              sharedGridOverridden: nextSharedOverride
+              sharedGridOverridden: nextSharedOverride,
+              n4BlockedOverridden: nextN4Override
             };
           }
           return row;
@@ -565,19 +823,60 @@
         saveRowsToFirebase(updatedRows);
 
         if (field === "service" || field === "size" || field === "grid") {
+          let actionSuffix = "";
+          if (markN4BlockedOverridden) actionSuffix = " (CTMS → N4 Blocked Grid Overridden)";
+          else if (markSharedGridOverridden) actionSuffix = " (Shared Grid Overridden)";
+
           const logEntry = {
             id: Date.now(),
             timestamp: now,
             service: field === "service" ? formattedValue : currentRow.service,
             size: field === "size" ? formattedValue : currentRow.size,
             grid: field === "grid" ? formattedValue : currentRow.grid,
-            action: markSharedGridOverridden
-              ? `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"} (Shared Grid Overridden)`
-              : `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}`
+            action: `Updated Line ${id} ${field.toUpperCase()} to ${formattedValue || "Empty"}${actionSuffix}`
           };
 
           firebase.database().ref("yard_history/" + logEntry.id).set(logEntry);
         }
+      };
+
+      const checkSharedGridConflict = (id, field, formattedValue, baselineRows, currentRow) => {
+        if (field !== "grid" && field !== "service") return null;
+        const candidateGrid = (field === "grid" ? formattedValue : (currentRow.grid || "")).trim().toUpperCase();
+        const candidateService = (field === "service" ? formattedValue : (currentRow.service || "")).trim();
+        const candidateSize = currentRow.size || "";
+        const isSameAsCommitted = currentRow[field] === formattedValue;
+
+        if (candidateGrid && candidateService && (!isSameAsCommitted || !currentRow.sharedGridOverridden)) {
+          const conflictingRows = baselineRows.filter(other => {
+            if (other.id === id) return false;
+            const otherGrid = (other.grid || "").trim().toUpperCase();
+            const otherService = (other.service || "").trim();
+            return otherGrid === candidateGrid && otherService !== "" && otherService !== candidateService;
+          });
+
+          if (conflictingRows.length > 0) {
+            const uniqueExisting = [];
+            const seenKeys = new Set();
+            conflictingRows.forEach(r => {
+              const label = formatServiceAndSize(r.service, r.size);
+              if (!seenKeys.has(label)) {
+                seenKeys.add(label);
+                uniqueExisting.push(label);
+              }
+            });
+
+            return {
+              rowId: id,
+              field,
+              newValue: formattedValue,
+              grid: candidateGrid,
+              incomingLabel: formatServiceAndSize(candidateService, candidateSize),
+              existingLabels: uniqueExisting
+            };
+          }
+        }
+        return null;
       };
 
       const handleCommitRowChange = (id, field, value) => {
@@ -586,53 +885,86 @@
         const currentRow = baselineRows.find(r => r.id === id);
         if (!currentRow) return;
 
-        if (field === "grid" || field === "service") {
+        // 1. Check if entering a CTMS -> N4 blocked grid that has Metro sitting in it (or being placed into it)
+        if (field === "grid" || field === "service" || field === "size") {
           const candidateGrid = (field === "grid" ? formattedValue : (currentRow.grid || "")).trim().toUpperCase();
-          const candidateService = (field === "service" ? formattedValue : (currentRow.service || "")).trim();
-          const candidateSize = currentRow.size || "";
+          const isN4Blocked = candidateGrid !== "" && n4BlockedGrids.includes(candidateGrid);
+          const isSameGrid = currentRow.grid === candidateGrid;
 
-          const isSameAsCommitted = currentRow[field] === formattedValue;
-
-          if (candidateGrid && candidateService && (!isSameAsCommitted || !currentRow.sharedGridOverridden)) {
-            const conflictingRows = baselineRows.filter(other => {
-              if (other.id === id) return false;
-              const otherGrid = (other.grid || "").trim().toUpperCase();
-              const otherService = (other.service || "").trim();
-              return otherGrid === candidateGrid && otherService !== "" && otherService !== candidateService;
+          if (isN4Blocked && (!isSameGrid || !currentRow.n4BlockedOverridden)) {
+            const metroRowsInGrid = baselineRows.filter(r => {
+              const rGrid = (r.grid || "").trim().toUpperCase();
+              if (rGrid !== candidateGrid) return false;
+              if (r.id === id) {
+                const nextSvc = field === "service" ? formattedValue : r.service;
+                const nextSize = field === "size" ? formattedValue : r.size;
+                return Boolean(nextSvc || nextSize || r.pPark);
+              }
+              return Boolean(r.service || r.size || r.pPark);
             });
 
-            if (conflictingRows.length > 0) {
-              const uniqueExisting = [];
-              const seenKeys = new Set();
-              conflictingRows.forEach(r => {
-                const label = formatServiceAndSize(r.service, r.size);
-                if (!seenKeys.has(label)) {
-                  seenKeys.add(label);
-                  uniqueExisting.push(label);
-                }
-              });
+            // Warn if Metro is sitting in that blocked grid (or if user is assigning a Metro line into it)
+            const incomingSvc = field === "service" ? formattedValue : currentRow.service;
+            const incomingSize = field === "size" ? formattedValue : currentRow.size;
+            const hasMetroContext = metroRowsInGrid.length > 0 || Boolean(incomingSvc || incomingSize);
 
-              setSharedGridConflict({
+            if (hasMetroContext) {
+              const metroSummaries = metroRowsInGrid.map(
+                r => `Line #${r.id} — ${formatServiceAndSize(r.id === id ? incomingSvc : r.service, r.id === id ? incomingSize : r.size)}`
+              );
+              setN4BlockedWarningConflict({
                 rowId: id,
                 field,
                 newValue: formattedValue,
                 grid: candidateGrid,
-                incomingLabel: formatServiceAndSize(candidateService, candidateSize),
-                existingLabels: uniqueExisting
+                metroSummaries
               });
               return;
             }
           }
         }
 
-        finalizeRowCommit(id, field, formattedValue, false);
+        // 2. Check Shared Grid Conflict
+        const sharedConflict = checkSharedGridConflict(id, field, formattedValue, baselineRows, currentRow);
+        if (sharedConflict) {
+          setSharedGridConflict(sharedConflict);
+          return;
+        }
+
+        finalizeRowCommit(id, field, formattedValue, {});
+      };
+
+      const handleConfirmN4BlockedWarning = () => {
+        if (!n4BlockedWarningConflict) return;
+        const { rowId, field, newValue } = n4BlockedWarningConflict;
+        setN4BlockedWarningConflict(null);
+
+        const baselineRows = committedRowsSnapshotRef.current;
+        const currentRow = baselineRows.find(r => r.id === rowId);
+        if (currentRow) {
+          const sharedConflict = checkSharedGridConflict(rowId, field, newValue, baselineRows, currentRow);
+          if (sharedConflict) {
+            setSharedGridConflict({ ...sharedConflict, alsoMarkN4Overridden: true });
+            return;
+          }
+        }
+
+        finalizeRowCommit(rowId, field, newValue, { markN4BlockedOverridden: true });
+      };
+
+      const handleCancelN4BlockedWarning = () => {
+        setN4BlockedWarningConflict(null);
+        setRows([...committedRowsSnapshotRef.current]);
       };
 
       const handleConfirmSharedGridOverride = () => {
         if (!sharedGridConflict) return;
-        const { rowId, field, newValue } = sharedGridConflict;
+        const { rowId, field, newValue, alsoMarkN4Overridden } = sharedGridConflict;
         setSharedGridConflict(null);
-        finalizeRowCommit(rowId, field, newValue, true);
+        finalizeRowCommit(rowId, field, newValue, {
+          markSharedGridOverridden: true,
+          markN4BlockedOverridden: Boolean(alsoMarkN4Overridden)
+        });
       };
 
       const handleCancelSharedGridConflict = () => {
@@ -687,6 +1019,7 @@
           lastUpdated: now,
           overridden: false,
           sharedGridOverridden: false,
+          n4BlockedOverridden: false,
           trainBlocked: false,
           tempGrid: "N/A"
         } : row);
@@ -767,7 +1100,6 @@
         saveGridZonesToFirebase(DEFAULT_GRID_ZONES);
       };
 
-      // Custom Grid Handlers
       const handleCustomGridFieldChange = (id, key, val) => {
         const updated = customGrids.map(cg => {
           if (cg.id !== id) return cg;
@@ -970,6 +1302,7 @@
           lastUpdated: "",
           overridden: false,
           sharedGridOverridden: false,
+          n4BlockedOverridden: false,
           trainBlocked: false,
           tempGrid: "N/A"
         };
@@ -1032,6 +1365,54 @@
             {P_PARK_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
 
+          {/* CTMS -> N4 Blocked Grid Warning Popup Modal */}
+          {n4BlockedWarningConflict && (
+            <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-800 border-2 border-rose-500/80 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center gap-2.5 text-rose-400">
+                  <span className="text-2xl">⚠️</span>
+                  <h3 className="text-lg font-bold text-white">Blocked Grid Alert (CTMS → N4)</h3>
+                </div>
+
+                <div className="space-y-2.5 text-sm text-slate-300">
+                  <p>
+                    Grid <strong className="text-rose-300 font-mono">{n4BlockedWarningConflict.grid}</strong> is currently marked as{" "}
+                    <strong className="text-rose-300">Blocked (Gated out of CTMS → N4)</strong> and has Metro container activity sitting in it:
+                  </p>
+
+                  {n4BlockedWarningConflict.metroSummaries.length > 0 && (
+                    <div className="bg-slate-900/90 border border-rose-500/40 rounded-xl p-3 space-y-1 text-xs font-mono text-amber-200">
+                      {n4BlockedWarningConflict.metroSummaries.map((item, idx) => (
+                        <div key={idx}>• {item}</div>
+                      ))}
+                    </div>
+                  )}
+
+                  <p className="text-slate-300">
+                    Are you sure you want to proceed with assigning <strong className="text-white font-mono">{n4BlockedWarningConflict.grid}</strong> on Line #{n4BlockedWarningConflict.rowId}?
+                  </p>
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-2">
+                  <button
+                    type="button"
+                    onClick={handleCancelN4BlockedWarning}
+                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleConfirmN4BlockedWarning}
+                    className="px-4 py-2 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-sm font-semibold shadow-lg transition"
+                  >
+                    Yes, Keep Assignment
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {/* Train Block Configuration Modal */}
           {trainBlockRowId !== null && modalTargetRow && (
             <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
@@ -1085,6 +1466,9 @@
             <div className="sticky top-4 z-40 max-w-7xl mx-auto mb-6 shadow-2xl transition-all">
               <XGridMapBoard
                 gridZones={gridZones}
+                n4BlockedGrids={n4BlockedGrids}
+                onUpdateN4BlockedGrids={handleUpdateN4BlockedGrids}
+                rows={rows}
                 onClose={() => setShowHeaderGridMap(false)}
               />
             </div>
@@ -1218,6 +1602,11 @@
                 }`}
               >
                 <span>🗺️ X Grid Map</span>
+                {n4BlockedGrids.length > 0 && (
+                  <span className="bg-rose-600 text-white text-[10px] font-bold px-1.5 py-0.5 rounded-full">
+                    {n4BlockedGrids.length} 🔒
+                  </span>
+                )}
                 <span className="text-xs text-slate-400">{showHeaderGridMap ? "▲" : "▼"}</span>
               </button>
 
@@ -1805,7 +2194,8 @@
                         const isOriginalDragged = draggedIndex === originalIndex;
                         const isHoverTarget = dragOverIndex === index;
                         const isBlocked = Boolean(row.trainBlocked);
-                        const status = evaluateRowGridStatus(row, dedicatedGrids);
+                        const status = evaluateRowGridStatus(row, dedicatedGrids, n4BlockedGrids);
+                        const isN4Blocked = Boolean(status?.isN4Blocked);
                         const showWarning = status?.hasConflict && !row.overridden;
 
                         return (
@@ -1829,6 +2219,8 @@
                                 ? "bg-blue-600/20 border-t-2 border-blue-400"
                                 : isBlocked
                                 ? "bg-amber-500/10 hover:bg-amber-500/15"
+                                : isN4Blocked
+                                ? "bg-rose-500/10 hover:bg-rose-500/15"
                                 : "hover:bg-slate-700/30"
                             }`}
                           >
@@ -1869,12 +2261,16 @@
                                   onChange={(e) => handleRowInputChange(row.id, "grid", e.target.value)}
                                   onBlur={(e) => handleCommitRowChange(row.id, "grid", e.target.value)}
                                   className={`w-full bg-slate-900 border text-white font-semibold text-sm rounded-lg p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none ${
-                                    showWarning || isBlocked ? "border-amber-500/80" : "border-slate-700"
+                                    isN4Blocked
+                                      ? "border-rose-500/80"
+                                      : showWarning || isBlocked
+                                      ? "border-amber-500/80"
+                                      : "border-slate-700"
                                   } ${isRemoveMode || isBlocked ? "pointer-events-none opacity-75" : ""}`}
                                 />
                               </div>
 
-                              {/* Slot Info & Train Block Warning Badge */}
+                              {/* Slot Info & Train / N4 Block Warning Badge */}
                               {status && (
                                 <div className="mt-1.5 flex flex-col gap-1">
                                   {isBlocked && (
@@ -1884,6 +2280,14 @@
                                       </span>
                                       <span className="text-[10px] font-mono text-amber-200/90">
                                         🔄 Temp Grid: <strong className="text-white">{row.tempGrid || "N/A"}</strong>
+                                      </span>
+                                    </div>
+                                  )}
+
+                                  {isN4Blocked && (
+                                    <div className="flex flex-col gap-0.5 bg-rose-500/20 border border-rose-500/50 rounded px-2 py-1">
+                                      <span className="text-[11px] font-bold text-rose-300">
+                                        🔒 Blocked (Gated out of CTMS → N4)
                                       </span>
                                     </div>
                                   )}
@@ -1898,7 +2302,7 @@
                                     </span>
                                   )}
 
-                                  {showWarning && !isBlocked && (
+                                  {showWarning && !isBlocked && !isN4Blocked && (
                                     <div className="flex flex-wrap items-center gap-1.5">
                                       <span className="text-[11px] text-amber-400 font-medium">
                                         ⚠️ {status.issues.join(" • ")}
@@ -1932,7 +2336,7 @@
                             </td>
                             <td className="py-3 px-4 align-top pt-4 text-xs text-slate-400 font-mono">{formatTo24Hour(row.lastUpdated)}</td>
                             
-                            {/* ACTION COLUMN (Direct Inline Buttons - No Dropdown) */}
+                            {/* ACTION COLUMN (Direct Inline Buttons) */}
                             <td className="py-3 px-4 align-top pt-3.5 text-right">
                               {isRemoveMode ? (
                                 <span className="inline-block text-red-300 group-hover:text-white bg-red-600/30 group-hover:bg-red-600 border border-red-500/50 text-xs font-semibold px-2.5 py-1.5 rounded-md transition">
