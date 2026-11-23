@@ -260,7 +260,6 @@
       const n4BlockedSet = new Set(n4BlockedGrids.map(g => g.toUpperCase()));
       const selectedSet = new Set(selectedGrids);
 
-      // Map active Metro rows sitting in each grid
       const activeMetroByGrid = {};
       rows.forEach((r) => {
         const g = (r.grid || "").trim().toUpperCase();
@@ -575,6 +574,16 @@
       const [history, setHistory] = useState([]);
       const [isSynced, setIsSynced] = useState(false);
 
+      // Timed Notifications State (Separate from Static Top Banner)
+      const [timedNotifications, setTimedNotifications] = useState([]);
+      const [showTimedNotificationsDrawer, setShowTimedNotificationsDrawer] = useState(false);
+      const [newTimedMessage, setNewTimedMessage] = useState("Send 8-hour yard report");
+      const [newTimedTimes, setNewTimedTimes] = useState(["06:00", "14:00", "22:00"]);
+      const [timeToAdd, setTimeToAdd] = useState("08:00");
+      const [activePopupAlert, setActivePopupAlert] = useState(null);
+      const triggeredSlotsRef = useRef(new Set());
+      const snoozeTimersRef = useRef([]);
+
       const [selectedServiceFilters, setSelectedServiceFilters] = useState([]);
       const [showFilterDropdown, setShowFilterDropdown] = useState(false);
       const [showHeaderGridMap, setShowHeaderGridMap] = useState(false);
@@ -679,6 +688,18 @@
           }
         });
 
+        const timedNotifRef = db.ref("yard_timed_notifications");
+        timedNotifRef.on("value", (snapshot) => {
+          const data = snapshot.val();
+          if (data && Array.isArray(data)) {
+            setTimedNotifications(data);
+          } else if (data && typeof data === "object") {
+            setTimedNotifications(Object.values(data));
+          } else {
+            setTimedNotifications([]);
+          }
+        });
+
         const historyRef = db.ref("yard_history");
         historyRef.on("value", (snapshot) => {
           const data = snapshot.val();
@@ -697,10 +718,121 @@
           customGridsRef.off();
           dedicatedRef.off();
           n4BlockedRef.off();
+          timedNotifRef.off();
           historyRef.off();
           notificationRef.off();
+          snoozeTimersRef.current.forEach(clearTimeout);
         };
       }, []);
+
+      // Timed Notification Clock Checker
+      useEffect(() => {
+        const checkSchedule = () => {
+          const now = new Date();
+          const yyyy = now.getFullYear();
+          const mm = String(now.getMonth() + 1).padStart(2, "0");
+          const dd = String(now.getDate()).padStart(2, "0");
+          const hh = String(now.getHours()).padStart(2, "0");
+          const min = String(now.getMinutes()).padStart(2, "0");
+          const currentTimeStr = `${hh}:${min}`;
+          const dateKey = `${yyyy}-${mm}-${dd}`;
+
+          timedNotifications.forEach((item) => {
+            if (!item || item.enabled === false) return;
+            const times = Array.isArray(item.times) ? item.times : [];
+            if (times.includes(currentTimeStr)) {
+              const slotKey = `${item.id}_${dateKey}_${currentTimeStr}`;
+              if (!triggeredSlotsRef.current.has(slotKey)) {
+                triggeredSlotsRef.current.add(slotKey);
+                setActivePopupAlert({
+                  id: item.id,
+                  message: item.message,
+                  triggeredTime: currentTimeStr
+                });
+              }
+            }
+          });
+        };
+
+        checkSchedule();
+        const intervalId = setInterval(checkSchedule, 15000);
+        return () => clearInterval(intervalId);
+      }, [timedNotifications]);
+
+      const saveTimedNotificationsToFirebase = (updatedList) => {
+        setTimedNotifications(updatedList);
+        firebase.database().ref("yard_timed_notifications").set(updatedList);
+      };
+
+      const handleAddTimeToNewReminder = () => {
+        if (!timeToAdd) return;
+        if (!newTimedTimes.includes(timeToAdd)) {
+          setNewTimedTimes([...newTimedTimes, timeToAdd].sort());
+        }
+      };
+
+      const handleRemoveTimeFromNewReminder = (t) => {
+        setNewTimedTimes(newTimedTimes.filter(item => item !== t));
+      };
+
+      const handleCreateTimedNotification = (e) => {
+        e.preventDefault();
+        const trimmedMsg = newTimedMessage.trim();
+        if (!trimmedMsg || newTimedTimes.length === 0) return;
+
+        const newItem = {
+          id: Date.now(),
+          message: trimmedMsg,
+          times: [...newTimedTimes].sort(),
+          enabled: true
+        };
+        const updated = [...timedNotifications, newItem];
+        saveTimedNotificationsToFirebase(updated);
+        setNewTimedMessage("");
+      };
+
+      const handleAddTimeToExistingReminder = (id, addedTime) => {
+        if (!addedTime) return;
+        const updated = timedNotifications.map(item => {
+          if (item.id !== id) return item;
+          const existing = Array.isArray(item.times) ? item.times : [];
+          if (existing.includes(addedTime)) return item;
+          return { ...item, times: [...existing, addedTime].sort() };
+        });
+        saveTimedNotificationsToFirebase(updated);
+      };
+
+      const handleRemoveTimeFromExistingReminder = (id, timeToRemove) => {
+        const updated = timedNotifications.map(item => {
+          if (item.id !== id) return item;
+          const existing = Array.isArray(item.times) ? item.times : [];
+          const filtered = existing.filter(t => t !== timeToRemove);
+          return { ...item, times: filtered };
+        });
+        saveTimedNotificationsToFirebase(updated);
+      };
+
+      const handleToggleTimedReminderEnabled = (id) => {
+        const updated = timedNotifications.map(item =>
+          item.id === id ? { ...item, enabled: item.enabled === false ? true : false } : item
+        );
+        saveTimedNotificationsToFirebase(updated);
+      };
+
+      const handleDeleteTimedReminder = (id) => {
+        const updated = timedNotifications.filter(item => item.id !== id);
+        saveTimedNotificationsToFirebase(updated);
+      };
+
+      const handleSnoozeAlert = () => {
+        if (!activePopupAlert) return;
+        const snoozedAlert = { ...activePopupAlert, triggeredTime: `${activePopupAlert.triggeredTime} (Snoozed)` };
+        setActivePopupAlert(null);
+        const timer = setTimeout(() => {
+          setActivePopupAlert(snoozedAlert);
+        }, 10 * 60 * 1000);
+        snoozeTimersRef.current.push(timer);
+      };
 
       const saveRowsToFirebase = (newRows) => {
         const reindexedRows = newRows.map((r, i) => ({
@@ -885,7 +1017,6 @@
         const currentRow = baselineRows.find(r => r.id === id);
         if (!currentRow) return;
 
-        // 1. Check if entering a CTMS -> N4 blocked grid that has Metro sitting in it (or being placed into it)
         if (field === "grid" || field === "service" || field === "size") {
           const candidateGrid = (field === "grid" ? formattedValue : (currentRow.grid || "")).trim().toUpperCase();
           const isN4Blocked = candidateGrid !== "" && n4BlockedGrids.includes(candidateGrid);
@@ -903,7 +1034,6 @@
               return Boolean(r.service || r.size || r.pPark);
             });
 
-            // Warn if Metro is sitting in that blocked grid (or if user is assigning a Metro line into it)
             const incomingSvc = field === "service" ? formattedValue : currentRow.service;
             const incomingSize = field === "size" ? formattedValue : currentRow.size;
             const hasMetroContext = metroRowsInGrid.length > 0 || Boolean(incomingSvc || incomingSize);
@@ -924,7 +1054,6 @@
           }
         }
 
-        // 2. Check Shared Grid Conflict
         const sharedConflict = checkSharedGridConflict(id, field, formattedValue, baselineRows, currentRow);
         if (sharedConflict) {
           setSharedGridConflict(sharedConflict);
@@ -1146,6 +1275,7 @@
 
       const closeAllDrawers = () => {
         setShowNotificationEditor(false);
+        setShowTimedNotificationsDrawer(false);
         setShowManageServices(false);
         setShowExportDrawer(false);
         setShowManageZones(false);
@@ -1157,6 +1287,11 @@
         closeAllDrawers();
         setNotificationInput(notificationText);
         setShowNotificationEditor(true);
+      };
+
+      const openTimedNotificationsDrawer = () => {
+        closeAllDrawers();
+        setShowTimedNotificationsDrawer(true);
       };
 
       const handleSaveNotification = (e) => {
@@ -1358,12 +1493,51 @@
       });
 
       const modalTargetRow = rows.find(r => r.id === trainBlockRowId);
+      const activeTimedCount = timedNotifications.filter(n => n.enabled !== false).length;
 
       return (
         <div className="min-h-screen bg-slate-900 text-slate-100 p-4 md:p-6 font-sans">
           <datalist id="p-park-list">
             {P_PARK_OPTIONS.map(opt => <option key={opt} value={opt} />)}
           </datalist>
+
+          {/* Timed Notification Pop-Up Alert Modal */}
+          {activePopupAlert && (
+            <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-sm flex items-center justify-center p-4">
+              <div className="bg-slate-800 border-2 border-indigo-400/80 rounded-2xl shadow-2xl max-w-md w-full p-6 space-y-4">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2.5 text-indigo-300">
+                    <span className="text-2xl">⏰</span>
+                    <h3 className="text-lg font-bold text-white">Timed Reminder Alert</h3>
+                  </div>
+                  <span className="text-xs font-mono bg-indigo-500/20 text-indigo-200 border border-indigo-400/40 px-2.5 py-1 rounded-full font-bold">
+                    {activePopupAlert.triggeredTime}
+                  </span>
+                </div>
+
+                <div className="bg-slate-900/90 border border-indigo-500/30 rounded-xl p-4 text-base font-semibold text-white">
+                  {activePopupAlert.message}
+                </div>
+
+                <div className="flex items-center justify-end gap-3 pt-1">
+                  <button
+                    type="button"
+                    onClick={handleSnoozeAlert}
+                    className="px-4 py-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-200 text-sm font-medium transition"
+                  >
+                    Snooze 10m
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setActivePopupAlert(null)}
+                    className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-semibold shadow-lg transition"
+                  >
+                    Dismiss Alert
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
 
           {/* CTMS -> N4 Blocked Grid Warning Popup Modal */}
           {n4BlockedWarningConflict && (
@@ -1621,7 +1795,7 @@
                 </button>
 
                 {showControlsMenu && (
-                  <div className="absolute right-0 mt-2 w-60 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
+                  <div className="absolute right-0 mt-2 w-64 bg-slate-800 border border-slate-700 rounded-xl shadow-2xl z-50 overflow-hidden py-1">
                     <button
                       onClick={() => {
                         openExportDrawer();
@@ -1636,9 +1810,23 @@
                         openNotificationEditor();
                         setShowControlsMenu(false);
                       }}
-                      className="w-full text-left px-4 py-2.5 text-sm text-amber-400 hover:bg-slate-700/60 flex items-center gap-2 border-b border-slate-700/50 font-medium"
+                      className="w-full text-left px-4 py-2.5 text-sm text-amber-400 hover:bg-slate-700/60 flex items-center gap-2 font-medium"
                     >
-                      <span>📢</span> {notificationText ? "Edit Notification" : "Add Notification"}
+                      <span>📢</span> {notificationText ? "Edit Top Banner" : "Add Top Banner"}
+                    </button>
+                    <button
+                      onClick={() => {
+                        openTimedNotificationsDrawer();
+                        setShowControlsMenu(false);
+                      }}
+                      className="w-full text-left px-4 py-2.5 text-sm text-indigo-400 hover:bg-slate-700/60 flex items-center justify-between border-b border-slate-700/50 font-medium"
+                    >
+                      <span className="flex items-center gap-2"><span>⏰</span> Timed Notifications</span>
+                      {activeTimedCount > 0 && (
+                        <span className="text-[10px] bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 px-1.5 py-0.5 rounded-full font-bold">
+                          {activeTimedCount}
+                        </span>
+                      )}
                     </button>
                     <button
                       onClick={addRow}
@@ -1702,6 +1890,176 @@
               </div>
             </div>
           </header>
+
+          {/* Timed Notifications (Multi-Time Pop-Up Reminders) Drawer */}
+          {showTimedNotificationsDrawer && (
+            <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-indigo-500/40 p-5 rounded-xl shadow-xl space-y-5">
+              <div className="flex justify-between items-start gap-3">
+                <div>
+                  <h3 className="text-sm font-bold text-indigo-400 uppercase tracking-wider flex items-center gap-2">
+                    <span>⏰</span> Timed Pop-Up Notifications (Multiple Set Times)
+                  </h3>
+                  <p className="text-xs text-slate-400 mt-0.5">
+                    Pops up a reminder window at scheduled times (e.g., every 8 hours for TL report) without touching the top banner.
+                  </p>
+                </div>
+                <button onClick={() => setShowTimedNotificationsDrawer(false)} className="text-slate-400 hover:text-white text-xs">✕ Close</button>
+              </div>
+
+              {/* Create New Timed Notification */}
+              <form onSubmit={handleCreateTimedNotification} className="bg-slate-900/90 border border-slate-700 rounded-xl p-4 space-y-3">
+                <div className="text-xs font-bold text-slate-300 uppercase tracking-wider">Create New Timed Reminder</div>
+                <div className="flex flex-col md:flex-row gap-3">
+                  <input
+                    type="text"
+                    value={newTimedMessage}
+                    onChange={(e) => setNewTimedMessage(e.target.value)}
+                    placeholder="Reminder message (e.g. Send 8-hour TL report)..."
+                    className="bg-slate-800 border border-slate-700 text-white text-sm rounded-lg px-3 py-2 flex-1 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                  />
+
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="time"
+                      value={timeToAdd}
+                      onChange={(e) => setTimeToAdd(e.target.value)}
+                      className="bg-slate-800 border border-slate-700 text-white font-mono text-sm rounded-lg px-3 py-2 focus:ring-2 focus:ring-indigo-500 focus:outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddTimeToNewReminder}
+                      className="bg-slate-700 hover:bg-slate-600 text-indigo-200 text-xs font-semibold px-3 py-2.5 rounded-lg transition whitespace-nowrap"
+                    >
+                      + Add Time
+                    </button>
+                  </div>
+                </div>
+
+                {/* Selected Times Chips for New Reminder */}
+                <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-xs text-slate-400">Set times:</span>
+                    {newTimedTimes.length === 0 ? (
+                      <span className="text-xs text-amber-400">Add at least one time</span>
+                    ) : (
+                      newTimedTimes.map((t) => (
+                        <span
+                          key={t}
+                          className="inline-flex items-center gap-1.5 bg-indigo-600/25 border border-indigo-500/40 text-indigo-200 font-mono text-xs font-bold px-2.5 py-1 rounded-md"
+                        >
+                          <span>{t}</span>
+                          <button
+                            type="button"
+                            onClick={() => handleRemoveTimeFromNewReminder(t)}
+                            className="text-indigo-300 hover:text-white"
+                          >
+                            ✕
+                          </button>
+                        </span>
+                      ))
+                    )}
+                  </div>
+
+                  <button
+                    type="submit"
+                    disabled={!newTimedMessage.trim() || newTimedTimes.length === 0}
+                    className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white text-xs font-semibold px-4 py-2 rounded-lg transition"
+                  >
+                    Save Timed Notification
+                  </button>
+                </div>
+              </form>
+
+              {/* Existing Timed Notifications List */}
+              <div className="space-y-2.5">
+                {timedNotifications.length === 0 ? (
+                  <p className="text-xs text-slate-500 italic py-2">No timed pop-up notifications configured yet.</p>
+                ) : (
+                  timedNotifications.map((item) => {
+                    const isEnabled = item.enabled !== false;
+                    return (
+                      <div
+                        key={item.id}
+                        className={`bg-slate-900 border rounded-xl p-3.5 flex flex-col gap-3 transition ${
+                          isEnabled ? "border-slate-700" : "border-slate-800 opacity-60"
+                        }`}
+                      >
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <div className="flex items-center gap-2.5">
+                            <span className={`w-2.5 h-2.5 rounded-full ${isEnabled ? "bg-indigo-400" : "bg-slate-600"}`}></span>
+                            <span className="font-semibold text-sm text-white">{item.message}</span>
+                          </div>
+
+                          <div className="flex items-center gap-2">
+                            <button
+                              type="button"
+                              onClick={() => setActivePopupAlert({ id: item.id, message: item.message, triggeredTime: "Test Pop-Up" })}
+                              className="text-xs bg-slate-800 hover:bg-slate-700 text-indigo-300 border border-slate-700 px-2.5 py-1 rounded-lg transition"
+                            >
+                              Test Pop-Up
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleToggleTimedReminderEnabled(item.id)}
+                              className={`text-xs px-2.5 py-1 rounded-lg border font-semibold transition ${
+                                isEnabled
+                                  ? "bg-emerald-500/15 text-emerald-300 border-emerald-500/30 hover:bg-emerald-500/25"
+                                  : "bg-slate-800 text-slate-400 border-slate-700 hover:text-white"
+                              }`}
+                            >
+                              {isEnabled ? "Active" : "Paused"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleDeleteTimedReminder(item.id)}
+                              className="text-xs text-red-400 hover:text-red-300 px-2 py-1"
+                            >
+                              ✕ Delete
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Multiple Set Times on This Notification */}
+                        <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-slate-800">
+                          <span className="text-xs text-slate-400">Times:</span>
+                          {(item.times || []).map((t) => (
+                            <span
+                              key={t}
+                              className="inline-flex items-center gap-1.5 bg-indigo-500/15 border border-indigo-500/30 text-indigo-200 font-mono text-xs font-bold px-2 py-0.5 rounded"
+                            >
+                              <span>{t}</span>
+                              <button
+                                type="button"
+                                onClick={() => handleRemoveTimeFromExistingReminder(item.id, t)}
+                                className="text-indigo-300 hover:text-white"
+                                title={`Remove ${t}`}
+                              >
+                                ✕
+                              </button>
+                            </span>
+                          ))}
+
+                          <div className="inline-flex items-center gap-1 ml-1">
+                            <input
+                              type="time"
+                              aria-label="Add time slot"
+                              onChange={(e) => {
+                                if (e.target.value) {
+                                  handleAddTimeToExistingReminder(item.id, e.target.value);
+                                  e.target.value = "";
+                                }
+                              }}
+                              className="bg-slate-800 border border-slate-700 text-slate-200 font-mono text-xs rounded px-2 py-0.5 focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          )}
 
           {/* Manage Custom Grids Drawer */}
           {showManageGrids && (
@@ -1962,12 +2320,12 @@
             </div>
           )}
 
-          {/* Notification Editor Drawer */}
+          {/* Static Top Notification Banner Editor Drawer */}
           {showNotificationEditor && (
             <div className="max-w-7xl mx-auto mb-6 bg-slate-800 border border-amber-500/40 p-5 rounded-xl shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <h3 className="text-sm font-bold text-amber-400 uppercase tracking-wider flex items-center gap-2">
-                  <span>📢</span> {notificationText ? "Edit Notification Banner" : "Set Yard Banner Notification"}
+                  <span>📢</span> {notificationText ? "Edit Top Notification Banner" : "Set Top Yard Banner Notification"}
                 </h3>
                 <button onClick={() => setShowNotificationEditor(false)} className="text-slate-400 hover:text-white text-xs">✕ Close</button>
               </div>
